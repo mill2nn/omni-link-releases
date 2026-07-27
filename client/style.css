@@ -1,0 +1,652 @@
+/* Omni Link — styling, tuned to match Premiere's dark UI */
+
+:root {
+    --bg: #1c1c1e;
+    --surface: #262629;
+    --surface-hover: #2f2f34;
+    --border: rgba(255, 255, 255, 0.07);
+    --text: #e6e6ea;
+    --text-2: #a0a0aa;
+    /* 5.52:1 on --bg, 4.88:1 on the #26262b modal. #6c6c76 measured 3.28 and
+       2.91, which put the empty-state hint and the modal's Cancel button under
+       the readable floor. #8a8a93 fixes the first but only reaches 4.40 on the
+       modal, so this goes one step lighter — Cancel is the one that has to pass
+       on the DARKER of the two backgrounds. */
+    --text-3: #92929b;
+    --accent: #2d8ceb;
+    --accent-2: #1473e6;
+    --danger: #f0736b;
+    --ok: #5fce88;
+    --warn: #e6b45f;
+    --radius: 9px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 12px;
+    color: var(--text);
+    background: var(--bg);
+    -webkit-user-select: none;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* text fields must stay selectable/editable — body's user-select:none
+   otherwise blocks typing in Premiere's CEF browser. And the fill-color must
+   be set explicitly or the typed text renders invisible in CEF. */
+input, textarea {
+    -webkit-user-select: text;
+    user-select: text;
+    color: var(--text);
+    -webkit-text-fill-color: var(--text);
+    caret-color: var(--accent);
+}
+input::placeholder { -webkit-text-fill-color: var(--text-3); }
+
+/* Scrollbars: Chromium's default is a wide light bar that looks nothing like
+   Premiere. Transparent track, and the thumb is inset with a transparent border
+   + background-clip so it reads as a floating pill rather than a full-width slab. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.16);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.30); background-clip: content-box; }
+::-webkit-scrollbar-thumb:active { background: rgba(255, 255, 255, 0.40); background-clip: content-box; }
+
+.app {
+    padding: 12px 12px 14px;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+/* each screen stacks vertically and fills the panel height */
+.view { flex: 1; display: flex; flex-direction: column; }
+
+button { font-family: inherit; cursor: pointer; }
+
+/* --- header --- */
+.header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.header .htext { flex: 1; min-width: 0; }
+.header h1 { font-size: 12.5px; font-weight: 600; letter-spacing: 0.1px; color: #f0f0f4; }
+.projName {
+    font-size: 10px; color: #8a8a93; margin-top: 1px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Version rides next to the project name. flex:none so a long project name
+   ellipsises around it instead of pushing it out of the panel. */
+.projName .verTag {
+    display: inline-block; margin-left: 5px; padding: 1px 4px;
+    border-radius: 3px; background: rgba(255, 255, 255, 0.07);
+    color: var(--text-3); font-size: 9px; font-weight: 600; vertical-align: 1px;
+}
+
+/* --- updater bar: hidden entirely when there is nothing to report --- */
+.updBar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; margin-bottom: 13px; border-radius: 8px;
+    background: rgba(45, 140, 235, 0.10); border: 1px solid rgba(45, 140, 235, 0.28);
+}
+.updIco { flex: none; display: flex; color: var(--accent); }
+.updIco svg { width: 14px; height: 14px; }
+.updText { flex: 1; min-width: 0; font-size: 11px; color: #c8c8d2; line-height: 1.35; }
+.updText b { color: var(--text); font-weight: 600; }
+.updProg { color: var(--text-3); }
+.updBtn {
+    flex: none; background: var(--accent-2); border: none; color: #fff;
+    font-size: 10.5px; font-weight: 600; padding: 4px 10px;
+    border-radius: 5px; font-family: inherit;
+}
+.updBtn:hover { background: #3d97ee; }
+.updBar.busy { background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.10); }
+.updBar.busy .updIco { color: var(--text-3); }
+.updBar.ok { background: rgba(95, 206, 136, 0.10); border-color: rgba(95, 206, 136, 0.30); }
+.updBar.ok .updIco { color: var(--ok); }
+.updBar.bad { background: rgba(240, 115, 107, 0.10); border-color: rgba(240, 115, 107, 0.30); }
+.updBar.bad .updIco { color: var(--danger); }
+.updBar.bad .updBtn { background: rgba(255, 255, 255, 0.09); }
+.updBar.bad .updBtn:hover { background: rgba(255, 255, 255, 0.14); }
+
+/* --- first-run explainer: shown once per machine, then dismissed for good --- */
+.onboard {
+    background: rgba(45, 140, 235, 0.07);
+    border: 1px solid rgba(45, 140, 235, 0.22);
+    border-radius: 10px; padding: 11px 12px 10px; margin-bottom: 14px;
+}
+.obTitle { font-size: 11.5px; font-weight: 600; color: var(--text); margin-bottom: 7px; line-height: 1.35; }
+.obSteps { margin: 0 0 10px 15px; padding: 0; }
+.obSteps li { font-size: 11px; color: #a8a8b2; line-height: 1.5; margin-bottom: 4px; }
+.obSteps b { color: var(--text); font-weight: 600; }
+.obGo {
+    width: 100%; background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.09); color: var(--text);
+    font-size: 11px; font-weight: 600; padding: 6px; border-radius: 6px;
+    font-family: inherit; cursor: pointer;
+}
+.obGo:hover { background: rgba(255, 255, 255, 0.11); }
+
+/* the daily action: flat, not a gradient — a glowing pill reads as a web app
+   dropped into Premiere rather than part of it */
+.importPill {
+    flex: none; display: flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 12px 0 10px; border: none; border-radius: 7px;
+    background: var(--accent-2); color: #fff;
+    font-size: 11.5px; font-weight: 600; letter-spacing: 0.1px; transition: 0.12s;
+}
+.importPill:hover { background: #3d97ee; }
+.importPill:active { transform: translateY(1px); }
+.importPill svg { width: 15px; height: 15px; flex: none; }
+
+.navBtn {
+    width: 28px; height: 28px; flex: none; border-radius: 7px;
+    border: none; background: transparent; color: #8a8a93;
+    cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.12s;
+}
+.navBtn:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+.navBtn svg { width: 15px; height: 15px; }
+
+/* gear overflow menu */
+.gearWrap { position: relative; flex: none; }
+.gearPop {
+    position: absolute; top: 30px; right: 0; z-index: 40; width: 168px;
+    background: #26262b; border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 10px; padding: 5px; box-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);
+    display: flex; flex-direction: column; gap: 2px;
+}
+.gearItem {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    padding: 8px 9px; border: none; border-radius: 7px;
+    background: transparent; color: var(--text); font-size: 12px; text-align: left; transition: 0.1s;
+}
+.gearItem:hover { background: rgba(255, 255, 255, 0.07); }
+.gearItem.danger { color: var(--danger); }
+.gearItem.danger:hover { background: rgba(240, 115, 107, 0.14); }
+.gearItem svg { width: 14px; height: 14px; flex: none; }
+
+/* --- section labels: quiet caps so the content leads, not the label --- */
+.secLabel {
+    display: flex; align-items: center; gap: 6px;
+    padding: 0 2px; margin-bottom: 8px; color: #8a8a93; -webkit-user-select: none;
+}
+.secLabel svg { display: none; }
+.secLabel span { font-size: 11px; font-weight: 600; letter-spacing: 0.09em; }
+.secHint { font-size: 10.5px; font-weight: 400 !important; color: #8a8a93; letter-spacing: 0 !important; }
+
+/* --- pinned: big color tiles --- */
+/* Flex, not grid. Two reasons:
+   1. a grid "1fr" track is minmax(auto, 1fr), so a long nowrap bin name like
+      "Music / SFX" pushed its column wider and squeezed its neighbours;
+   2. a trailing row with fewer tiles left a hole — with flex-grow the last row
+      spreads to fill instead. --basis is set from JS to force the wrap point. */
+.pinnedGrid {
+    display: flex; flex-wrap: wrap;
+    gap: 8px; margin-bottom: 16px;
+    border-radius: 12px; transition: 0.12s;
+}
+.pinnedGrid > .pinTile { flex: 1 1 var(--basis, 30%); min-width: 0; }
+/* cue while dragging a bin from the tree up here */
+.pinnedGrid.pinDropHint { outline: 1px dashed rgba(45, 140, 235, 0.4); outline-offset: 3px; }
+.pinnedGrid.pinDropActive { outline: 2px dashed var(--accent); outline-offset: 3px; background: rgba(45, 140, 235, 0.06); }
+.pinEmpty {
+    flex: 1 1 100%;
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    padding: 16px 12px; color: var(--text-3); font-size: 11px; text-align: center;
+    border: 1px dashed var(--border); border-radius: var(--radius);
+}
+.pinEmpty svg { width: 15px; height: 15px; opacity: 0.7; flex: none; }
+
+/* the tile is tinted with the bin's own colour rather than splitting it across a
+   chip, an underline and a dot — one colour, one meaning, scannable at a glance */
+.pinTile {
+    position: relative;
+    border-radius: 9px; padding: 9px 10px;
+    display: flex; flex-direction: column;
+    background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border);
+    cursor: pointer; transition: 0.12s; -webkit-user-select: none;
+}
+/* NOT filter/opacity/transform on hover: those create a stacking context, which
+   traps the ⋮ palette inside the tile so the bin rows below paint over it. */
+/* Hover: lift, brighten, and let the folder icon lean in.
+   The :not(.menuHost) guard is load-bearing. transform creates a stacking
+   context, and .menuHost is the tile whose menu is open — without the guard the
+   hover would trap the open palette behind the bin rows, which is exactly the
+   bug that made filter:brightness() unusable here before.
+   transform and box-shadow only, so this animates on the compositor. */
+.pinTile {
+    transition: background-color 0.14s ease, border-color 0.14s ease,
+                transform 0.16s cubic-bezier(.2, .8, .2, 1), box-shadow 0.16s ease;
+}
+.pinTile:not(.menuHost):hover {
+    background-color: rgba(255, 255, 255, 0.10);
+    transform: translateY(-2px);
+    box-shadow: 0 5px 14px rgba(0, 0, 0, 0.35);
+}
+.pinTile:not(.menuHost):hover .pinIco { transform: scale(1.12); }
+.pinTile .pinIco { transition: transform 0.16s cubic-bezier(.2, .8, .2, 1); }
+.pinTile:not(.menuHost):active { transform: translateY(0) scale(0.975); box-shadow: none; }
+/* mid-drag the tile is a placeholder; hover lift on top of that reads as a glitch */
+.pinTile.tileSlot:hover, .pinTile.dragging:hover { transform: none; box-shadow: none; }
+.pinTile.fileOver { border-color: var(--accent); box-shadow: inset 0 0 0 2px rgba(45, 140, 235, 0.5); }
+.pinTile .pinTop { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; min-width: 0; }
+.pinTile .pinIco { flex: none; display: flex; color: var(--text-2); }
+.pinTile .pinIco svg { width: 14px; height: 14px; }
+.pinTile .pinName {
+    font-size: 12px; font-weight: 600; line-height: 1.15; color: #f0f0f4;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pinTile .pinSub {
+    font-size: 10.5px; color: #8a8a93;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* per-tile ⋮ menu + palette (shared with tree rows) */
+.tileMenu { position: absolute; top: 5px; right: 5px; z-index: 6; }
+/* anchored to the top-right of the tile/row now that there is no button */
+.tilePalette {
+    display: none; position: absolute; top: 0; right: 0;
+    /* 8 tracks so all three halves divide cleanly: the 16 label swatches take one
+       each (two exact rows of eight), actions take four each (two per row), and a
+       full-width item spans eight. Five actions used to cost five rows. */
+    grid-template-columns: repeat(8, 1fr); gap: 5px; width: 212px;
+    background: #26262b; border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 10px; padding: 8px; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55); z-index: 30;
+}
+/* click to open, not hover — brushing past the ⋮ used to pop a menu containing
+   Remove, and it closed again the moment the pointer drifted off the button */
+.tileMenu.open .tilePalette { display: grid; }
+/* whichever tile or row owns the open menu is lifted above everything after it */
+.pinTile.menuHost, .trow.menuHost { z-index: 50; }
+/* menu header: which bin this is, and a way out */
+.tilePalette .menuHead {
+    grid-column: span 8; display: flex; align-items: center; gap: 6px;
+    margin-bottom: 3px; padding-bottom: 5px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.tilePalette .mhName {
+    flex: 1; min-width: 0; font-size: 11px; font-weight: 600; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tilePalette .swClose {
+    flex: none; width: 18px; height: 18px; padding: 0; border: none; border-radius: 4px;
+    background: transparent; color: var(--text-3);
+    display: flex; align-items: center; justify-content: center; transition: 0.1s;
+}
+.tilePalette .swClose:hover { background: rgba(255, 255, 255, 0.10); color: var(--text); }
+.tilePalette .swClose svg { width: 11px; height: 11px; }
+
+.tilePalette .sw {
+    grid-column: span 1; justify-self: center;
+    width: 20px; height: 20px; border-radius: 50%; cursor: pointer; border: none; padding: 0;
+    transition: transform 0.1s;
+}
+/* 20px circles in a 300px panel are small targets, so hover has to be obvious */
+.tilePalette .sw:hover { transform: scale(1.18); }
+.tilePalette .sw.clear {
+    grid-column: span 8; justify-self: stretch;
+    width: auto; height: 22px; border-radius: 5px; margin-top: 2px;
+    background: transparent; border: 1px solid rgba(255, 255, 255, 0.12); color: var(--text-2);
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    font-family: inherit; font-size: 10.5px;
+}
+.tilePalette .sw.clear:hover { transform: none; background: rgba(255, 255, 255, 0.07); color: var(--text); }
+.tilePalette .sw.clear svg { width: 10px; height: 10px; }
+/* two actions per row; the destructive one gets a row to itself */
+.tilePalette .swAct {
+    grid-column: span 4; display: flex; align-items: center; gap: 6px;
+    margin-top: 1px; padding: 6px 7px; border: none; border-radius: 5px;
+    background: rgba(255, 255, 255, 0.06); color: var(--text);
+    font-size: 11px; text-align: left; white-space: nowrap; overflow: hidden;
+}
+.tilePalette .swAct.wide { grid-column: span 8; }
+.tilePalette .swAct.danger { color: var(--danger); }
+.tilePalette .swAct.danger:hover { background: rgba(240, 115, 107, 0.16); }
+.tilePalette .swAct:hover { background: rgba(255, 255, 255, 0.12); }
+.tilePalette .swAct svg { width: 13px; height: 13px; flex: none; }
+
+/* --- collapsible section header (bin structure) --- */
+.folderHeader {
+    display: flex; align-items: center; gap: 5px;
+    padding: 0 2px; margin-bottom: 6px; cursor: pointer;
+    color: #8a8a93; -webkit-user-select: none;
+}
+.folderHeader .fhChevron { width: 11px; height: 11px; flex: none; transition: transform 0.15s; }
+.folderHeader.collapsed .fhChevron { transform: rotate(-90deg); }
+.folderHeader .fhLabel { font-size: 11px; font-weight: 600; letter-spacing: 0.09em; }
+
+/* --- bin tree --- */
+/* no flex gap — the .tgap elements ARE the spacing, and they grow into
+   insertion previews while something is being dragged over the tree */
+.treeList { display: flex; flex-direction: column; gap: 0; margin-bottom: 8px; }
+/* 8px at rest, not 4 — with the 11px band on each neighbouring row that makes
+   the insert zone ~30px instead of 11px, which is what made it fiddly */
+/* Every gap SHOWS itself at rest — a faint dashed rule with a small +. The gap
+   was invisible until you were already dragging over it, so there was nothing
+   telling you that the space between two bins is a place you can drop into. */
+.tgap {
+    position: relative; height: 11px; overflow: hidden;
+    pointer-events: none; transition: height 0.15s ease;
+}
+.tgap::before {
+    content: ""; position: absolute; left: 2px; right: 2px; top: 50%;
+    border-top: 1px dashed rgba(255, 255, 255, 0.11);
+}
+.tgap::after {
+    content: "+"; position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 10px; line-height: 1; font-weight: 600;
+    color: var(--text-3); opacity: 0.5;
+    background: var(--bg); padding: 0 4px;
+}
+/* firmer once the pointer is anywhere in the list, so it reads as interactive */
+.treeList:hover .tgap::before { border-top-color: rgba(255, 255, 255, 0.2); }
+.treeList:hover .tgap::after { opacity: 0.8; }
+/* the open gap draws its own ghost + label, so the hint gets out of the way */
+.tgap.open { height: 32px; }
+.tgap.open::before, .tgap.open::after { display: none; }
+.tgapGhost {
+    display: flex; align-items: center; gap: 7px;
+    margin-top: 3px; padding: 5px 9px;
+    border: 1px dashed var(--accent); border-radius: 8px;
+    background: rgba(45, 140, 235, 0.14); color: var(--accent);
+    font-size: 11.5px; white-space: nowrap; overflow: hidden;
+    opacity: 0; transition: opacity 0.15s;
+}
+.tgap.open .tgapGhost { opacity: 1; }
+.tgapGhost svg { flex: none; width: 14px; height: 14px; }
+/* an illegal drop still draws a target, so the drag never looks unresponsive */
+.tgap.bad .tgapGhost { border-color: var(--danger); background: rgba(224, 90, 90, 0.12); color: var(--danger); }
+/* warning states have to carry themselves now that rows have no border at rest */
+.trow.noDrop { border-color: var(--danger); background: rgba(240, 115, 107, 0.13); }
+/* two siblings with the same name resolve to one Premiere bin — flag it */
+.trow.dupName { border-color: rgba(240, 115, 107, 0.55); background: rgba(240, 115, 107, 0.08); }
+.trow.dupName::before { background: var(--danger) !important; }
+.trow.dupName .tname { color: var(--danger); }
+
+/* reorder handle — invisible at rest, fades in on row hover */
+.trow .tgrip {
+    flex: none; width: 11px; height: 16px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-3); opacity: 0; cursor: grab; transition: opacity 0.12s;
+}
+.trow:hover .tgrip { opacity: 0.7; }
+.trow .tgrip:hover { opacity: 1; }
+.trow .tgrip svg { width: 9px; height: 14px; pointer-events: none; }
+.trow.dragging { opacity: 0.35; }
+/* Rows, not cards: a border + surface on every bin meant dozens of competing
+   rectangles. Colour now appears once per row, as a rail, and only when linked. */
+.trow {
+    position: relative;
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 9px; border-radius: 7px;
+    background: transparent; border: 1px solid transparent; transition: 0.12s;
+}
+.trow.linked { background: rgba(255, 255, 255, 0.035); }
+.trow.linked::before {
+    content: ""; position: absolute; left: 0; top: 6px; bottom: 6px;
+    width: 2px; border-radius: 0 2px 2px 0; background: var(--rail, var(--accent));
+}
+.trow:hover { background: rgba(255, 255, 255, 0.07); }
+.trow.dropOver { border-color: var(--accent); background: rgba(45, 140, 235, 0.14); }
+
+/* tree guides: a faint line down the left of each nested group, so depth reads
+   without needing colour. ::after is free — ::before is the linked-colour rail. */
+.trow[data-depth="0"] .tname { font-weight: 600; font-size: 12.5px; }
+.trow:not([data-depth="0"])::after {
+    content: ""; position: absolute; left: -9px; top: -6px; bottom: -6px;
+    width: 1px; background: rgba(255, 255, 255, 0.10); pointer-events: none;
+}
+
+/* fold / unfold parent bins */
+.trow .tchev {
+    flex: none; width: 15px; height: 15px; padding: 0; border: none; border-radius: 4px;
+    background: transparent; color: var(--text-3);
+    display: flex; align-items: center; justify-content: center; transition: 0.12s;
+}
+.trow .tchev:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+.trow .tchev svg { width: 12px; height: 12px; transition: transform 0.15s; }
+.trow .tchev.closed svg { transform: rotate(-90deg); }
+.trow .tchev.spacer { pointer-events: none; }
+.trow .ticon { flex: none; display: flex; color: var(--accent); cursor: grab; }
+.trow .ticon:active { cursor: grabbing; }
+.trow .ticon svg { width: 15px; height: 15px; pointer-events: none; }
+/* a label sized to the word, so the rest of the row stays right-clickable and
+   grabbable; it only becomes an input while you're actually renaming */
+.trow .tname {
+    flex: 0 1 auto; min-width: 0; max-width: 62%;
+    font-size: 12px; font-weight: 500; padding: 3px 5px;
+    background: transparent; border: 1px solid transparent; border-radius: 5px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: 0.12s;
+}
+.trow span.tname:hover { background: rgba(255, 255, 255, 0.07); }
+.trow input.tname.editing {
+    flex: 1 1 auto; background: #161618; border-color: var(--accent); outline: none;
+}
+/* soaks up the leftover width so the chip and pin dot stay right-aligned */
+.trow .tspacer { flex: 1 1 auto; min-width: 6px; align-self: stretch; }
+
+/* the linked folder's name, as plain quiet text — a violet pill on every row was
+   a third place colour appeared without meaning anything */
+.tchip {
+    flex: none; max-width: 118px;
+    font-size: 10.5px; color: #8a8a93; cursor: pointer; transition: color 0.12s;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tchip:hover { color: var(--text-2); text-decoration: underline; }
+.tnolink { flex: none; font-size: 10.5px; color: #8a8a93; font-style: italic; }
+
+/* row ⋮ menu shares .tileMenu; anchor it in-flow at the end of the row */
+.trow .rowMenu { position: static; }
+.trow .rowMenu .tilePalette { top: 100%; right: 0; }
+
+/* pin dot when a bin is pinned */
+.trow .pinDot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+/* --- "bins in this project" tick list --- */
+.modal.adopt { max-width: 262px; text-align: left; }
+.adoptList {
+    max-height: 240px; overflow-y: auto; margin: 4px 0 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 5px;
+}
+.adoptRow {
+    display: flex; align-items: center; gap: 7px;
+    padding: 5px 6px; border-radius: 5px; cursor: pointer;
+    font-size: 11.5px; color: var(--text);
+}
+.adoptRow:hover { background: rgba(255, 255, 255, 0.05); }
+.adoptRow input { flex: none; accent-color: var(--accent); margin: 0; }
+.adoptRow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mbtn.ghost { background: rgba(255, 255, 255, 0.07); color: var(--text); }
+.mbtn.ghost:hover { background: rgba(255, 255, 255, 0.12); }
+
+/* --- big drop zone, empty structure only --- */
+/* With no bins there are no rows and no gaps, so the only target was an 8px
+   sliver — and that is precisely the moment someone is first trying to drop a
+   folder in. flex:1 lets it take the whole empty panel. */
+.dropZone {
+    flex: 1; min-height: 132px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 3px; padding: 20px 16px; margin-bottom: 10px;
+    border: 1.5px dashed rgba(255, 255, 255, 0.14); border-radius: 12px;
+    color: var(--text-3); text-align: center; transition: 0.12s;
+}
+.dropZone svg { width: 30px; height: 30px; margin-bottom: 5px; opacity: 0.75; }
+.dzTitle { font-size: 12px; font-weight: 600; color: var(--text-2); }
+.dzSub { font-size: 10.5px; line-height: 1.4; }
+.dropZone.fileOver {
+    border-color: var(--accent); border-style: dashed;
+    background: rgba(45, 140, 235, 0.09); color: var(--accent);
+}
+.dropZone.fileOver .dzTitle { color: var(--accent); }
+
+/* --- add button --- */
+/* solid, not dashed — dashed now means "drop target" and nothing else */
+.add {
+    width: 100%; display: flex; align-items: center; justify-content: center; gap: 7px;
+    padding: 11px; margin-bottom: 10px; border-radius: 8px;
+    background: rgba(255, 255, 255, 0.03); color: #8a8a93;
+    border: 1px solid transparent; cursor: pointer;
+    font-size: 12px; transition: 0.12s;
+}
+.add:hover { color: var(--text); background: rgba(255, 255, 255, 0.07); }
+.add svg { width: 14px; height: 14px; }
+/* it is also a drop target: a folder dropped here becomes a top-level bin */
+.add.fileOver {
+    border-color: var(--accent); border-style: dashed;
+    background: rgba(45, 140, 235, 0.10); color: var(--accent);
+}
+
+/* the two setup actions sit side by side, equal weight */
+
+/* pushes the create button to the bottom */
+.spacer { flex: 1; min-height: 8px; }
+
+/* --- primary create button --- */
+.createBtn {
+    width: 100%; display: flex; align-items: center; justify-content: center; gap: 7px;
+    padding: 10px; border-radius: var(--radius); border: none;
+    font-size: 12px; font-weight: 700; letter-spacing: 0.2px; color: #fff;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    box-shadow: 0 2px 10px rgba(20, 115, 230, 0.3); transition: 0.12s;
+}
+.createBtn:hover { filter: brightness(1.08); box-shadow: 0 4px 14px rgba(20, 115, 230, 0.4); }
+.createBtn:active { transform: translateY(1px); }
+.createBtn svg { width: 14px; height: 14px; }
+
+/* --- one-line status --- */
+.status {
+    font-size: 11.5px; margin-bottom: 10px; color: var(--text-2); transition: 0.12s;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.status:empty { margin-bottom: 0; }
+.status.ok { color: var(--ok); }
+.status.error { color: var(--warn); }
+/* brief flash so a result is noticed without hunting for it */
+.status.flash { animation: statusFlash 0.7s ease-out; }
+@keyframes statusFlash {
+    0% { transform: translateX(-3px); opacity: 0.4; }
+    30% { transform: translateX(0); opacity: 1; }
+    100% { opacity: 1; }
+}
+.status a { color: var(--accent); text-decoration: underline; cursor: pointer; }
+
+/* --- duplicate-file dialog --- */
+.modalOv {
+    position: fixed; inset: 0; z-index: 9999;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.modal {
+    width: 100%; max-width: 240px; text-align: center;
+    background: #26262b; border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 12px; padding: 16px; box-shadow: 0 16px 44px rgba(0, 0, 0, 0.6);
+}
+.modalTitle { font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+.modalBody { font-size: 11px; color: var(--text-2); line-height: 1.5; margin-bottom: 14px; }
+.modalBtns { display: flex; gap: 8px; }
+.mbtn { flex: 1; padding: 9px; border-radius: 7px; border: none; font-size: 12px; font-weight: 600; color: #fff; transition: 0.12s; }
+.mbtn.keep { background: var(--accent); }
+.mbtn.keep:hover { background: #4a9bef; }
+.mbtn.replace { background: var(--danger); }
+.mbtn.replace:hover { filter: brightness(1.08); }
+.modalCancel { margin-top: 10px; background: transparent; border: none; color: var(--text-3); font-size: 11px; }
+.modalCancel:hover { color: var(--text-2); }
+.mbtn.ok { background: var(--accent); }
+.mbtn.ok:hover { background: #4a9bef; }
+.mbtn.cancel { background: rgba(255, 255, 255, 0.08); color: var(--text); }
+.mbtn.cancel:hover { background: rgba(255, 255, 255, 0.14); }
+.modalInput {
+    width: 100%; padding: 9px 10px; margin-bottom: 14px; font-size: 12px;
+    background: #161618; border: 1px solid var(--border); border-radius: 7px;
+}
+.modalInput:focus { outline: none; border-color: var(--accent); }
+
+/* --- slim "+" under each bin (add sub-bin) --- */
+
+/* --- drag ghost (folder chip follows the cursor while pinning) --- */
+.dragGhost {
+    position: fixed; z-index: 9998; pointer-events: none;
+    display: flex; align-items: center; gap: 7px;
+    padding: 7px 11px; border-radius: 9px;
+    background: var(--surface-hover); border: 1px solid rgba(45, 140, 235, 0.5);
+    color: var(--text); font-size: 12px; font-weight: 600;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5); transform: rotate(-2deg);
+}
+.dragGhost .dgIcon { display: flex; color: var(--accent); }
+.dragGhost .dgIcon svg { width: 15px; height: 15px; }
+
+/* --- preset builder --- */
+.presetRow { display: flex; gap: 7px; margin-bottom: 10px; }
+.presetRow select {
+    flex: 1; min-width: 0; padding: 8px 9px; font-size: 12px;
+    background: #161618; color: var(--text); border: 1px solid var(--border); border-radius: 7px;
+}
+.presetRow select:focus { outline: none; border-color: var(--accent); }
+.miniBtn {
+    flex: none; display: flex; align-items: center; gap: 5px; padding: 8px 11px;
+    background: transparent; color: var(--text-2); border: 1px solid var(--border);
+    border-radius: 7px; font-size: 12px; transition: 0.12s;
+}
+.miniBtn:hover { color: var(--text); border-color: rgba(255, 255, 255, 0.18); }
+.miniBtn svg { width: 13px; height: 13px; }
+.builderBtns { display: flex; gap: 7px; margin-top: 8px; }
+.ghost2 {
+    flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 9px; border-radius: 8px; font-size: 12px;
+    background: transparent; color: var(--text-2); border: 1px solid var(--border); transition: 0.12s;
+}
+.ghost2:hover { color: var(--text); border-color: rgba(255, 255, 255, 0.18); }
+.ghost2.danger { color: var(--danger); border-color: rgba(240, 115, 107, 0.4); }
+.ghost2.danger:hover { background: rgba(240, 115, 107, 0.12); }
+.ghost2 svg { width: 13px; height: 13px; }
+
+/* --- blank-project chooser --- */
+.modal.chooser { max-width: 250px; text-align: left; }
+.modal.chooser .modalTitle, .modal.chooser .modalBody { text-align: center; }
+.chooserList { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+.chItem {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    padding: 10px 11px; border: 1px solid var(--border); border-radius: 8px;
+    background: rgba(255, 255, 255, 0.03); color: var(--text); font-size: 12px; text-align: left; transition: 0.12s;
+}
+.chItem:hover { background: rgba(45, 140, 235, 0.14); border-color: rgba(45, 140, 235, 0.45); }
+.chItem .chIco { display: flex; color: var(--accent); }
+.chItem .chIco svg { width: 15px; height: 15px; }
+
+/* the tile being dragged, while the others slide around it */
+.pinTile.tileDragging { opacity: 0.45; cursor: grabbing; }
+
+/* --- iOS-style tile lift ------------------------------------------------ */
+/* the slot the tile left behind: keeps the space so nothing reflows */
+.pinTile.tileSlot { background: rgba(255, 255, 255, 0.03) !important; border-style: dashed; }
+.pinTile.tileSlot > * { opacity: 0; }
+/* the tile itself, floating under the cursor */
+.tileGhost {
+    position: fixed; z-index: 9997; pointer-events: none; margin: 0;
+    transform: scale(1); opacity: 0.95;
+    /* left/top are NOT transitioned while lifted — the ghost must sit exactly
+       under the cursor. Only the settle back into the slot eases. */
+    transition: transform 180ms ease, box-shadow 180ms ease, left 180ms ease, top 180ms ease;
+}
+.tileGhost.lifted {
+    transform: scale(1.05);
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
+    transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+/* --- multi-select ------------------------------------------------------- */
+.trow.selected { background: rgba(45, 140, 235, 0.18); border-color: rgba(45, 140, 235, 0.45); }
+.trow.selected:hover { background: rgba(45, 140, 235, 0.24); }
+.trow.selected .tname { color: #f0f0f4; }
+
+/* --- roomier pinned shelf when the tree is collapsed -------------------- */
+body.treeCollapsed .pinTile { padding: 13px 12px; }
+body.treeCollapsed .pinTile .pinTop { margin-bottom: 10px; }
+body.treeCollapsed .pinTile .pinIco svg { width: 17px; height: 17px; }
+body.treeCollapsed .pinTile .pinName { font-size: 13px; }
+body.treeCollapsed .pinTile .pinSub { font-size: 10.5px; }

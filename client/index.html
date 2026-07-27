@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Omni Link</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app">
+
+        <!-- ============ MAIN VIEW ============ -->
+        <div id="mainView" class="view">
+            <div class="header">
+                <button id="importBtn" class="importPill" title="Import all new files into their bins">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11" /><path d="M8 11l4 4 4-4" /><path d="M5 20h14" /></svg>
+                    <span>Import</span>
+                </button>
+                <div class="htext">
+                    <h1>Omni Link</h1>
+                    <div id="projName" class="projName">—</div>
+                </div>
+                <div class="gearWrap">
+                    <button id="gearBtn" class="navBtn" title="More">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+                    </button>
+                    <div id="gearPop" class="gearPop" style="display:none;">
+                        <button class="gearItem" id="giPresets">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+                            Customize presets…
+                        </button>
+                        <button class="gearItem" id="giReload">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.7-5.7L20 8M20 4v4h-4" /><path d="M20 12a8 8 0 0 1-13.7 5.7L4 16M4 20v-4h4" /></svg>
+                            Reload for this project
+                        </button>
+                        <button class="gearItem" id="giAddTop">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+                            Add top-level bin
+                        </button>
+                        <button class="gearItem" id="giRead">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M8 13h8" /><path d="M12 9v8" /></svg>
+                            Read bins from project
+                        </button>
+                        <button class="gearItem" id="giUpdate">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 21h16" /></svg>
+                            Check for updates
+                        </button>
+                        <button class="gearItem danger" id="giReset">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.7-5.7L20 8M20 4v4h-4" /><path d="M20 12a8 8 0 0 1-13.7 5.7L4 16M4 20v-4h4" /></svg>
+                            Reset structure
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="status" class="status"></div>
+
+            <!-- updater; hidden unless there is something to say -->
+            <div id="updBar" class="updBar" style="display:none;">
+                <span class="updIco"></span>
+                <span class="updText"></span>
+                <button class="updBtn" style="display:none;"></button>
+            </div>
+
+            <!-- first-run explainer; main.js removes it unless this machine is new -->
+            <div id="onboard" class="onboard" style="display:none;">
+                <div class="obTitle">Link folders to bins, import only what's new.</div>
+                <ol class="obSteps">
+                    <li>Drag a folder from Finder onto <b>BIN STRUCTURE</b> — that makes a bin and links it.</li>
+                    <li>Hit <b>Import</b>. Only files you don't have yet come in.</li>
+                    <li>Right-click any bin to pin, colour or relink it.</li>
+                </ol>
+                <button id="onboardGo" class="obGo">Got it</button>
+            </div>
+
+            <div class="secLabel">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l-1 6 3 3v2H7v-2l3-3-1-6zM12 15v5" /></svg>
+                <span>PINNED</span>
+                <span class="secHint">right-click for options</span>
+            </div>
+            <div id="pinnedGrid" class="pinnedGrid"></div>
+
+            <div id="treeHeader" class="folderHeader">
+                <svg class="fhChevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+                <span class="fhLabel">BIN STRUCTURE</span>
+                <span class="secHint">drop a folder · right-click for options</span>
+            </div>
+
+            <div id="treeList" class="treeList"></div>
+
+            <!-- shown only when the structure is empty: a thin gap is nothing to
+                 aim at, and that is exactly when someone is first trying to drop -->
+            <div id="dropZone" class="dropZone" style="display:none;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M12 10v5" /><path d="M9.5 12.5 12 10l2.5 2.5" /></svg>
+                <div class="dzTitle">Drag folders here</div>
+                <div class="dzSub">One bin per folder, linked and ready to import</div>
+            </div>
+
+            <button id="addBinBtn" class="add">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+                Add bin
+            </button>
+        </div>
+
+        <!-- ============ PRESET BUILDER VIEW ============ -->
+        <div id="builderView" class="view" style="display:none;">
+            <div class="header">
+                <button id="builderBack" class="navBtn" title="Back">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+                </button>
+                <div class="htext">
+                    <h1>Preset builder</h1>
+                    <div class="projName">structure + colors · reused across projects</div>
+                </div>
+            </div>
+
+            <div class="presetRow">
+                <select id="presetSelect"></select>
+                <button id="presetNewBtn" class="miniBtn" title="New preset">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+                    New
+                </button>
+            </div>
+
+            <div id="builderList" class="treeList"></div>
+
+            <button id="builderAddBin" class="add">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+                Add bin
+            </button>
+
+            <div class="spacer"></div>
+
+            <button id="applyPresetBtn" class="createBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+                Apply to current project
+            </button>
+            <div class="builderBtns">
+                <button id="savePresetBtn" class="ghost2">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5zM8 3v6h7M8 21v-6h8v6" /></svg>
+                    Save
+                </button>
+                <button id="deletePresetBtn" class="ghost2 danger">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" /></svg>
+                    Delete
+                </button>
+            </div>
+            <div id="builderStatus" class="status"></div>
+        </div>
+
+    </div>
+
+    <script src="CSInterface.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>

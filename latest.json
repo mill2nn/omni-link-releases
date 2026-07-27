@@ -1,0 +1,5 @@
+{
+  "version": "1.2.0",
+  "notes": "First published build",
+  "files": ["client/index.html", "client/main.js", "client/style.css", "jsx/host.jsx", "CSXS/manifest.xml"]
+}
