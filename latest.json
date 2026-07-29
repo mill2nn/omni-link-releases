@@ -1,5 +1,5 @@
 {
   "version": "1.2.0",
-  "notes": "First published build",
+  "notes": "Installers now included \u2014 download the zip from Releases",
   "files": ["client/index.html", "client/main.js", "client/style.css", "jsx/host.jsx", "CSXS/manifest.xml"]
 }

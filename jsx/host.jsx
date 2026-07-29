@@ -277,20 +277,69 @@ function aip_setBinColor(binPath, labelIndex) {
 }
 
 /*
- * Read the bin structure that ALREADY exists in the project.
+ * Read the bin structure that ALREADY exists in the project, AND work out which
+ * disk folder each bin is fed from.
  *
- * The exact inverse of aip_createStructure: returns newline-separated,
- * tab-joined bin paths in project order, so a project someone has already been
- * working in can be pulled into the panel instead of retyped by hand.
+ * The structure half is the exact inverse of aip_createStructure. The folder half
+ * is the useful part: every footage item remembers the file it came from, so a
+ * bin's clips point at the folder that bin is really tracking. That turns "scan
+ * the project" into a complete setup — structure and links — instead of a tree
+ * you still have to wire up by hand.
  *
- * Bins only (type 2) — clips, sequences and captions are not structure. Label
- * colours are deliberately not read: Premiere exposes setColorLabel but no
+ * A folder is only reported when EVERY clip directly in that bin agrees on it.
+ * A wrong link is worse than no link: Import would start pulling unrelated files
+ * into that bin, which is more work to undo than just linking it yourself.
+ *
+ * Returns one record per line:  binPath \u0001 folder     (folder may be empty)
+ * Tab already separates path segments, so it cannot also separate fields.
+ *
+ * Label colours are still not read — Premiere exposes setColorLabel but no
  * reliable getter, so the panel would be inventing values.
  */
 var AIP_READ_MAX_DEPTH = 8;      // pathological nesting guard
 var AIP_READ_MAX_BINS = 400;     // don't try to swallow a monster project
+// Written as an escape, never a literal control character: a raw 0x01 in
+// source is invisible in every editor and does not survive copy-paste. Same
+// reason q() spells out its line terminators instead of embedding them.
+var AIP_FIELD_SEP = "\u0001";
 
-function aip_readProject() {
+// Everything up to the last separator. Premiere hands back native paths, so both
+// separators have to be honoured: / on macOS, \ on Windows.
+function aip_dirOf(p) {
+    var s = String(p);
+    var cut = Math.max(s.lastIndexOf("/"), s.lastIndexOf("\\"));
+    return cut > 0 ? s.substring(0, cut) : "";
+}
+
+// The folder every clip in this bin shares, or "" if they disagree or there are
+// none. Only direct children — a sub-bin has its own row and its own answer.
+function aip_binFolder(bin) {
+    var seen = "", kids;
+    try { kids = bin.children; } catch (e) { return ""; }
+    if (!kids) return "";
+    for (var i = 0; i < kids.numItems; i++) {
+        var it;
+        try { it = kids[i]; } catch (e2) { continue; }
+        if (!it) continue;
+        if (it.type == 2) continue;                     // sub-bin: not this bin's media
+        var mp = "";
+        // Offline clips, proxies, titles and colour mattes can throw here or hand
+        // back nothing. Any of those means "no opinion", not "link to nowhere".
+        try { if (typeof it.getMediaPath === "function") mp = String(it.getMediaPath()); } catch (e3) { mp = ""; }
+        if (mp === "") continue;
+        var dir = aip_dirOf(mp);
+        if (dir === "") continue;
+        if (seen === "") seen = dir;
+        else if (seen != dir) return "";                // disagreement → leave unlinked
+    }
+    if (seen === "") return "";
+    // A link to a folder that no longer exists would make Import fail later with
+    // a confusing error. Better to hand back nothing and let Bom point at it.
+    try { if (!(new Folder(seen)).exists) return ""; } catch (e4) { return ""; }
+    return seen;
+}
+
+function aip_scanProject() {
     if (!app.project) return "ERR:No project open";
     var out = [], hit = false;
 
@@ -306,12 +355,12 @@ function aip_readProject() {
             if (!item || item.type != 2) continue;          // 2 = bin
             var name = aip_trim(String(item.name));
             if (name === "") continue;
-            // A tab in a bin name would corrupt the path format, which is the
-            // contract with the panel. Fold it to a space rather than emit a
-            // path that would silently split into two bins.
-            name = name.replace(/[\t\r\n]/g, " ");
+            // A tab or the field separator in a bin name would corrupt the record
+            // format, which is the contract with the panel. Fold them to a space
+            // rather than emit a record that silently splits.
+            name = name.replace(/[\t\r\n\u0001]/g, " ");
             var path = prefix === "" ? name : prefix + "\t" + name;
-            out.push(path);
+            out.push(path + AIP_FIELD_SEP + aip_binFolder(item));
             walk(item, path, depth + 1);
         }
     }
@@ -322,6 +371,9 @@ function aip_readProject() {
     if (out.length === 0) return "OK:";                     // valid, just no bins
     return (hit ? "TRUNC:" : "OK:") + out.join("\n");
 }
+
+// Kept so an older installed panel talking to a newer host still works.
+function aip_readProject() { return aip_scanProject(); }
 
 // The active project's key: its file path if saved, else its name.
 function aip_projectKey() {

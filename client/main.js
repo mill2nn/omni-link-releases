@@ -418,19 +418,34 @@ function paletteHTML() {
  * Cancel is handled in wireMenu, not by any action handler — it closes the menu
  * and touches nothing.
  */
-function menuActs(list) {
-    var half = 0;
-    for (var i = 0; i < list.length; i++) if (!list[i].wide) half++;
+function menuActs(list, wantCancel) {
+    var half = 0, lastHalf = -1;
+    for (var i = 0; i < list.length; i++) {
+        if (!list[i].wide) { half++; lastHalf = i; }
+    }
     if (half % 2 === 0) return list;
+
     var out = list.slice();
-    // Bom asked for it red. Note that Remove is also red, so red here means
-    // "the button that ends this", not "destructive".
-    out.push({ act: "cancel", label: "Cancel", icon: ICON_X, danger: true });
+    if (wantCancel) {
+        // Only the pinned tile. Its menu is a lone "Unpin", so a second button is
+        // the only way to fill that row. Red because Bom asked for red — note
+        // Remove is red too, so red here reads as "the button that ends this".
+        out.push({ act: "cancel", label: "Cancel", icon: ICON_X, danger: true });
+        return out;
+    }
+    // Bin rows already have the ✕ in the header, so a Cancel here is a second way
+    // to do the same thing. Widen the last half-width action instead — same
+    // result, no extra button, one row shorter.
+    if (lastHalf >= 0) {
+        out[lastHalf] = {};
+        for (var k in list[lastHalf]) out[lastHalf][k] = list[lastHalf][k];
+        out[lastHalf].wide = true;
+    }
     return out;
 }
 
-function menuHTML(actions, title) {
-    actions = menuActs(actions);
+function menuHTML(actions, title, wantCancel) {
+    actions = menuActs(actions, wantCancel);
     var h = '<div class="tileMenu">' +
         '<div class="tilePalette">' +
         // A header, for two reasons: right-click menus give no clue which bin they
@@ -481,7 +496,7 @@ function wireMenu(scope, node, onColor, onAct, actsFn) {
         if (!pal) return;
         var old = pal.querySelectorAll(".swAct");
         for (var i = 0; i < old.length; i++) pal.removeChild(old[i]);
-        var list = menuActs(actsFn(node)), h = "";
+        var list = menuActs(actsFn(node), false), h = "";
         for (var j = 0; j < list.length; j++) {
             h += '<button class="swAct' + (list[j].wide ? " wide" : "") + (list[j].danger ? " danger" : "") +
                 '" data-act="' + list[j].act + '">' + list[j].icon + " " + esc(list[j].label) + "</button>";
@@ -847,7 +862,7 @@ function renderPinned() {
 
             var sub = node.folder ? folderLeaf(node.folder) : "tap to link";
             tile.innerHTML =
-                menuHTML([{ act: "unpin", label: "Unpin", icon: ICON_PIN }], node.name) +
+                menuHTML([{ act: "unpin", label: "Unpin", icon: ICON_PIN }], node.name, true) +
                 '<div class="pinTop"><span class="pinIco">' + ICON_FOLDER_FILLED + '</span>' +
                 '<span class="pinName">' + esc(node.name) + '</span></div>' +
                 '<div class="pinSub">' + esc(sub) + '</div>';
@@ -2076,21 +2091,69 @@ function initOnboard() {
 }
 
 // Check the active project and load its memory; run the chooser if it's new.
+//
+// The in-flight guard matters. currentProjectKey is only assigned inside the
+// callback, so two calls arriving before the first reply BOTH saw "never set up"
+// and both ran the scan — the second adopted nothing and overwrote the first's
+// status with "Every one of those was already here." The panel calls this on
+// launch, on window focus and on mouseenter, so overlapping calls are normal.
+var projectQueryBusy = false;
 function refreshProject(force) {
+    if (projectQueryBusy) return;
+    projectQueryBusy = true;
     cs.evalScript("aip_projectKey()", function (key) {
+        projectQueryBusy = false;
         key = (key && key !== "") ? key : "__noproject__";
         if (!force && key === currentProjectKey) return;
         currentProjectKey = key;
         setProjectLabel(key);
         var t = loadProjectTree(key);
-        if (t === null) {           // never set up → ask what to start from
+        if (t === null) {           // never set up → adopt what's there, or ask
             treeData = normalize([]);
             renderAll();
-            showBlankChooser();
+            autoAdoptOrChoose(key);
         } else {
             treeData = t;
             renderAll();
         }
+    });
+}
+
+/*
+ * First time the panel meets a project: look in Premiere before asking anything.
+ *
+ * Opening a project that is already organised used to hand you a blank template
+ * and a modal, so you rebuilt by hand a structure sitting right there in the
+ * Project panel. If bins exist, they come straight in.
+ *
+ * Runs ONLY when there is no saved tree for this project, so it can never
+ * overwrite work: the moment bins are adopted, saveTree() marks the project set
+ * up and this never fires for it again. Bins added in Premiere later are pulled
+ * in on demand with ⚙ ▸ Read bins from project.
+ */
+var adoptScanKey = null;        // second belt: one scan per project, ever
+function autoAdoptOrChoose(key) {
+    if (adoptScanKey === key) return;
+    adoptScanKey = key;
+    // With no project open, anything saved lands under aip_tree::__noproject__ and
+    // is stranded there forever. Don't scan, and don't offer a chooser that would
+    // write into that orphan.
+    if (key === "__noproject__") {
+        setStatus("Open a project in Premiere to set up its bins.", "");
+        return;
+    }
+    cs.evalScript("aip_scanProject()", function (res) {
+        res = res === null || res === undefined ? "" : String(res);
+        var trunc = res.indexOf("TRUNC:") === 0;
+        if (!trunc && res.indexOf("OK:") !== 0) {
+            // ERR, or Premiere didn't run it. Fall back to the normal question
+            // rather than leaving an empty panel and no way forward.
+            showBlankChooser();
+            return;
+        }
+        var recs = parseScan(res.substring(trunc ? 6 : 3));
+        if (!recs.length) { showBlankChooser(); return; }    // nothing to adopt → ask
+        adoptPaths(recs, trunc ? "trunc" : "auto");
     });
 }
 
@@ -2270,16 +2333,19 @@ function builderAddTop() { builderTree.push({ name: "New bin", color: "", childr
 // "Footage", "Footage\tKling", … → nested nodes. Parents always precede their
 // children in the input, but a tick-list can omit a parent, so any missing
 // ancestor is created as a plain unlinked bin.
-function treeFromPaths(paths) {
+// Accepts either plain path strings or {path, folder} records — the folder is the
+// disk folder aip_scanProject worked out from the clips inside that bin.
+function treeFromPaths(recs) {
     var roots = [], index = {};
-    for (var i = 0; i < paths.length; i++) {
-        var segs = paths[i].split("\t");
-        var arr = roots, keyPrefix = "";
+    for (var i = 0; i < recs.length; i++) {
+        var rec = (typeof recs[i] === "string") ? { path: recs[i], folder: "" } : recs[i];
+        var segs = rec.path.split("\t");
+        var arr = roots, keyPrefix = "", node = null;
         for (var s = 0; s < segs.length; s++) {
             var name = segs[s];
             if (name === "") continue;
             keyPrefix = keyPrefix === "" ? name : keyPrefix + "\t" + name;
-            var node = index[keyPrefix];
+            node = index[keyPrefix];
             if (!node) {
                 node = { name: name, folder: "", color: "", pinned: false, open: true, children: [] };
                 index[keyPrefix] = node;
@@ -2287,13 +2353,37 @@ function treeFromPaths(paths) {
             }
             arr = node.children;
         }
+        // The folder belongs to the leaf only. An ancestor invented to hold a
+        // child must not inherit that child's folder.
+        if (node && rec.folder) node.folder = rec.folder;
     }
     return roots;
 }
 
+// One record per line: binPath \u0001 folder. The folder half is what makes this
+// a real setup rather than a bare tree — see aip_scanProject.
+// Escape, not a literal control character — a raw 0x01 is invisible in every
+// editor and does not survive copy-paste.
+var FIELD_SEP = "\u0001";
+function parseScan(body) {
+    var out = [];
+    if (body === "") return out;
+    var lines = body.split("\n");
+    for (var i = 0; i < lines.length; i++) {
+        if (lines[i] === "") continue;
+        var cut = lines[i].indexOf(FIELD_SEP);
+        // A host that predates the folder half sends the path alone. Read it
+        // rather than mangling every bin name with a stray separator.
+        out.push(cut < 0
+            ? { path: lines[i], folder: "" }
+            : { path: lines[i].substring(0, cut), folder: lines[i].substring(cut + 1) });
+    }
+    return out;
+}
+
 function readProjectBins() {
     setStatus("Reading the project…", "");
-    cs.evalScript("aip_readProject()", function (res) {
+    cs.evalScript("aip_scanProject()", function (res) {
         res = res === null || res === undefined ? "" : String(res);
         if (res.indexOf("ERR:") === 0) { setStatus("⚠ " + res.substring(4), "error"); return; }
         var trunc = res.indexOf("TRUNC:") === 0;
@@ -2301,19 +2391,22 @@ function readProjectBins() {
             setStatus("⚠ Premiere didn’t run the script (" + (res || "no response") + ")", "error");
             return;
         }
-        var body = res.substring(trunc ? 6 : 3);
-        var paths = body === "" ? [] : body.split("\n");
-        if (!paths.length) { setStatus("This project has no bins yet.", ""); return; }
+        var recs = parseScan(res.substring(trunc ? 6 : 3));
+        if (!recs.length) { setStatus("This project has no bins yet.", ""); return; }
         setStatus("", "");
-        showAdoptDialog(paths, trunc);
+        showAdoptDialog(recs, trunc);
     });
 }
 
 // Tick-list of what the project already has. Ticking a child ticks its parents,
 // because a bin can't be adopted without the path that addresses it.
-function showAdoptDialog(paths, trunc) {
-    var chosen = {};
-    for (var i = 0; i < paths.length; i++) chosen[paths[i]] = true;
+function showAdoptDialog(recs, trunc) {
+    var chosen = {}, folderOf = {}, paths = [];
+    for (var i = 0; i < recs.length; i++) {
+        paths.push(recs[i].path);
+        folderOf[recs[i].path] = recs[i].folder;
+        chosen[recs[i].path] = true;
+    }
 
     var ov = document.createElement("div");
     ov.className = "modalOv";
@@ -2323,9 +2416,15 @@ function showAdoptDialog(paths, trunc) {
         '<div class="adoptList">';
     for (var j = 0; j < paths.length; j++) {
         var segs = paths[j].split("\t");
+        var fol = folderOf[paths[j]];
+        // Show what each bin will be linked to. A bin with no folder is the one
+        // you'll have to finish by hand, so it says so rather than looking blank.
         h += '<label class="adoptRow" style="padding-left:' + ((segs.length - 1) * 14) + 'px">' +
             '<input type="checkbox" checked data-path="' + esc(paths[j]) + '">' +
-            '<span>' + esc(segs[segs.length - 1]) + '</span></label>';
+            '<span>' + esc(segs[segs.length - 1]) + '</span>' +
+            (fol ? '<span class="adoptFol" title="' + esc(fol) + '">' + esc(folderLeaf(fol)) + '</span>'
+                 : '<span class="adoptFol none">no folder</span>') +
+            '</label>';
     }
     h += '</div><div class="modalBtns">' +
         '<button class="mbtn ghost adoptNone">Untick all</button>' +
@@ -2367,7 +2466,9 @@ function showAdoptDialog(paths, trunc) {
     };
     ov.querySelector(".adoptGo").onclick = function () {
         var keep = [];
-        for (var m = 0; m < paths.length; m++) if (chosen[paths[m]]) keep.push(paths[m]);
+        for (var m = 0; m < paths.length; m++) {
+            if (chosen[paths[m]]) keep.push({ path: paths[m], folder: folderOf[paths[m]] });
+        }
         close();
         if (!keep.length) { setStatus("Nothing selected.", ""); return; }
         adoptPaths(keep);
@@ -2376,8 +2477,8 @@ function showAdoptDialog(paths, trunc) {
 
 // Merge into the existing tree rather than replacing it: a bin that's already
 // there keeps its folder link, its colour and its pinned state.
-function adoptPaths(paths) {
-    var incoming = treeFromPaths(paths), added = 0;
+function adoptPaths(paths, mode) {
+    var incoming = treeFromPaths(paths), added = 0, linked = 0, unlinked = [];
 
     (function merge(src, destArr) {
         for (var i = 0; i < src.length; i++) {
@@ -2389,6 +2490,13 @@ function adoptPaths(paths) {
                 match = { name: src[i].name, folder: "", color: "", pinned: false, open: true, children: [] };
                 destArr.push(match);
                 added++;
+                if (src[i].folder) { match.folder = src[i].folder; linked++; }
+                else if (!src[i].children.length) unlinked.push(src[i].name);
+            } else if (!match.folder && src[i].folder) {
+                // An existing bin with no link gains one; a bin already linked keeps
+                // the folder Bom chose, which outranks anything inferred.
+                match.folder = src[i].folder;
+                linked++;
             }
             if (!match.children) match.children = [];
             merge(src[i].children, match.children);
@@ -2396,9 +2504,20 @@ function adoptPaths(paths) {
     })(incoming, treeData);
 
     expandTree(); saveTree(); renderAll();
-    setStatus(added
-        ? "✓ Added " + added + " bin" + (added === 1 ? "" : "s") + " from the project."
-        : "Every one of those was already here.", added ? "ok" : "");
+
+    if (!added && !linked) { setStatus("Every one of those was already set up.", ""); return; }
+
+    // Name the bins that still need a folder. Without that you'd have to hunt for
+    // the ones missing a folder name, which is the whole point of the flag.
+    var msg = "✓ Set up " + added + " bin" + (added === 1 ? "" : "s");
+    if (mode === "trunc") msg += " (first " + paths.length + ")";
+    msg += ", " + linked + " linked";
+    if (unlinked.length) {
+        msg += " — " + (unlinked.length > 3
+            ? unlinked.length + " need a folder"
+            : unlinked.join(", ") + " need" + (unlinked.length === 1 ? "s" : "") + " a folder");
+    }
+    setStatus(msg + ".", "ok");
 }
 
 // ====================================================================
@@ -2655,6 +2774,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // main view
     document.getElementById("importBtn").onclick = importAll;
+    document.getElementById("setupBtn").onclick = readProjectBins;
     document.getElementById("addBinBtn").onclick = addTopBin;
     document.getElementById("treeHeader").onclick = toggleCollapsed;
 

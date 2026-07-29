@@ -151,6 +151,20 @@ button { font-family: inherit; cursor: pointer; }
 .navBtn:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
 .navBtn svg { width: 15px; height: 15px; }
 
+/* "set up from this project" — accented so it reads as an action, not a setting.
+   Icon only: at 300px a second labelled pill next to Import does not fit, and the
+   project name has to keep enough room to ellipsise rather than push things out. */
+.setupBtn { color: var(--accent); }
+.setupBtn:hover { color: #5aa9f0; background: rgba(45, 140, 235, 0.14); }
+
+/* which folder each bin will be linked to, in the scan dialog */
+.adoptFol {
+    flex: none; max-width: 92px; margin-left: auto;
+    font-size: 10px; color: var(--text-3);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.adoptFol.none { font-style: italic; opacity: 0.75; }
+
 /* gear overflow menu */
 .gearWrap { position: relative; flex: none; }
 .gearPop {
