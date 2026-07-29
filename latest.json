@@ -1,5 +1,5 @@
 {
   "version": "1.2.0",
-  "notes": "Installers included in the release download",
-  "files": ["client/index.html", "client/main.js", "client/style.css", "jsx/host.jsx", "CSXS/manifest.xml"]
+  "notes": "One-line install from the terminal",
+  "files": ["client/index.html", "client/main.js", "client/style.css", "client/CSInterface.js", "jsx/host.jsx", "CSXS/manifest.xml"]
 }
