@@ -22,7 +22,7 @@ var cs = new CSInterface();
 // Bump this AND ExtensionBundleVersion in CSXS/manifest.xml together — the
 // shareable-zip script fails the build if the two ever disagree, because
 // "which version are you on?" has to have one answer.
-var VERSION = "1.3.6";
+var VERSION = "1.3.7";
 
 /*
  * What Import picks up. A format missing from here is skipped in silence — the
@@ -3975,9 +3975,19 @@ var HTTP_TIMEOUT_MS = 15000;
 
 var updateInfo = null;          // parsed latest.json once a newer version is seen
 
+/* raw.githubusercontent.com sits behind a CDN that caches for minutes. That is
+ * fine for the panel files and fatal for latest.json: publish a release and the
+ * check keeps reading the OLD version number, so nobody is offered the update
+ * and there is no error anywhere to explain it. Seen three times in one day —
+ * 1.3.6 published while raw still answered 1.3.5.
+ *
+ * A unique query string is what actually defeats it; the no-cache headers below
+ * are belt and braces. Applied to the panel files too, because downloading a
+ * stale main.js beside a fresh manifest is a worse failure than a slow one. */
 function updateUrl(rel) {
     return "https://raw.githubusercontent.com/" + UPDATE_OWNER + "/" + UPDATE_REPO +
-        "/" + UPDATE_BRANCH + "/" + rel;
+        "/" + UPDATE_BRANCH + "/" + rel +
+        "?nocache=" + Date.now() + "-" + Math.floor(Math.random() * 1e6);
 }
 
 // Where are we installed? The panel is served from <extension>/client/index.html,
@@ -4025,7 +4035,11 @@ function httpsGet(url, cb, depth) {
     var req, done = false;
     function finish(err, buf) { if (done) return; done = true; cb(err, buf); }
     try {
-        req = https.get(url, { headers: { "User-Agent": "OmniLink/" + VERSION } }, function (res) {
+        req = https.get(url, { headers: {
+            "User-Agent": "OmniLink/" + VERSION,
+            "Cache-Control": "no-cache, no-store, max-age=0",
+            "Pragma": "no-cache"
+        } }, function (res) {
             var code = res.statusCode;
             if ((code === 301 || code === 302 || code === 307 || code === 308) && res.headers.location) {
                 res.resume();
