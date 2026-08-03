@@ -37,6 +37,10 @@
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10" /><circle cx="19" cy="18" r="2" /></svg>
                             <span id="giTileModeLabel">Pinned click: highlight instead</span>
                         </button>
+                        <button class="gearItem" id="giMirror" data-tip="When Import runs, a subfolder inside a linked folder becomes a matching sub-bin, linked and imported.<i>Turn it off if you want the structure to stay exactly as you built it.</i>">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h3l2 2h4a2 2 0 0 1 2 2" /><path d="M7 12h13a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2z" /></svg>
+                            <span id="giMirrorLabel">Mirror subfolders: on</span>
+                        </button>
                         <button class="gearItem" id="giLog" data-tip="Every import that brought files in, newest first — which bin, and which files.">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h9" /><circle cx="18" cy="18" r="3" /></svg>
                             Import log
@@ -65,9 +69,9 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M8 13h8" /><path d="M12 9v8" /></svg>
                         <span>Read</span>
                     </button>
-                    <button id="tbRecolor" class="tbBtn" data-tip="Push every bin's colour back onto its clips.<i>Runs on Import already — this is for a label changed by hand.</i>">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 9 9c0-1-1-1.5-2-1.5h-2a2 2 0 0 1 0-4h1c1 0 2-.7 2-2A4.5 4.5 0 0 0 12 3z" /><circle cx="7.5" cy="11.5" r="1" /><circle cx="12" cy="7.5" r="1" /></svg>
-                        <span>Colours</span>
+                    <button id="tbUndo" class="tbBtn off" disabled>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5" /><path d="M4 9h11a5 5 0 0 1 0 10h-3" /></svg>
+                        <span>Undo</span>
                     </button>
                     <button id="tbReload" class="tbBtn" data-tip="Re-read this project's saved structure from disk, if the panel and the project have drifted apart.">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.7-5.7L20 8M20 4v4h-4" /><path d="M20 12a8 8 0 0 1-13.7 5.7L4 16M4 20v-4h4" /></svg>

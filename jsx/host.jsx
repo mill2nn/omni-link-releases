@@ -106,7 +106,16 @@ function aip_import(binPath, folderPath, extCsv, colorIndex) {
     for (var p = 0; p < parts.length; p++) allowed[aip_trim(parts[p])] = true;
 
     var folder = new Folder(folderPath);
-    if (!folder.exists) return "ERR:Folder not found";
+    if (!folder.exists) {
+        // Naming the path matters: it usually arrived from a Finder drag, and
+        // the difference between a missing volume, an escaped character and a
+        // file-instead-of-folder is invisible without seeing the string.
+        var alt = "";
+        try { alt = decodeURI(String(folderPath)); } catch (eD) { alt = ""; }
+        return "ERR:Folder not found: " + folderPath +
+               ((alt && alt !== String(folderPath)) ? "  (decoded: " + alt + ")" : "");
+    }
+    if (!(folder instanceof Folder)) return "ERR:Not a folder: " + folderPath;
 
     var files = folder.getFiles(); // top-level only (does not recurse)
     var toImport = [];
@@ -123,7 +132,22 @@ function aip_import(binPath, folderPath, extCsv, colorIndex) {
         toImport.push(file.fsName);
     }
 
-    if (toImport.length === 0) return "0";
+    if (toImport.length === 0) {
+        /* Zero is a legitimate answer — everything was already in. But zero also
+         * comes back when the folder holds nothing this panel recognises, and
+         * the two are indistinguishable from the outside. Report the counts so
+         * the panel can tell them apart. */
+        var seen = 0, wrongExt = 0;
+        for (var z = 0; z < files.length; z++) {
+            var zf = files[z];
+            if (!(zf instanceof File)) continue;
+            var zb = decodeURI(zf.name);
+            if (zb.charAt(0) === ".") continue;
+            seen++;
+            if (!allowed[aip_getExt(zb).toLowerCase()]) wrongExt++;
+        }
+        return "0" + AIP_FIELD_SEP + "seen=" + seen + " skipped-type=" + wrongExt;
+    }
 
     var root = app.project.rootItem;
     // Snapshot the root's items first. Some Premiere builds ignore importFiles'

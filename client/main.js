@@ -22,7 +22,7 @@ var cs = new CSInterface();
 // Bump this AND ExtensionBundleVersion in CSXS/manifest.xml together — the
 // shareable-zip script fails the build if the two ever disagree, because
 // "which version are you on?" has to have one answer.
-var VERSION = "1.3.5";
+var VERSION = "1.3.6";
 
 /*
  * What Import picks up. A format missing from here is skipped in silence — the
@@ -1456,7 +1456,11 @@ function renderPinned() {
                 (node.folder ? "opens " + esc(folderLeaf(node.folder)) + " in Finder"
                              : "to link a folder to it") + "</i>");
 
-            var sub = node.folder ? folderLeaf(node.folder) : "no folder";
+            // Before the subtitle, which reads it — var hoists the name but not
+            // the value, so computing it later left this silently falsy.
+            var tileGone = !!node.folder && linkMissing(binPathOf(node));
+            var tileUnset = linkUnset(node);
+            var sub = node.folder ? (tileGone ? "folder missing" : folderLeaf(node.folder)) : "no folder";
             // How many files the last Import put in here — marked until the
             // next run, so a glance answers "did anything actually arrive".
             var fresh = freshRollup(node, binPathOf(node), true);
@@ -1469,6 +1473,8 @@ function renderPinned() {
                     freshTip(node, binPathOf(node), true).replace(/"/g, "&quot;") +
                     '">+' + fresh + '</span>' : '');
             if (fresh) tile.classList.add("hasNew");
+            if (tileGone) tile.classList.add("linkGone");
+            else if (tileUnset) tile.classList.add("linkUnset");
 
             // the whole tile carries the bin's colour — that glance is the point of pinning
             if (node.color) {
@@ -1550,6 +1556,58 @@ function computeDupNodes() {
 // Visible rows in draw order. Each entry carries `chain` — the links from
 // root down to itself, indexed by depth — which is what lets a gap resolve
 // "insert at depth 1" into a concrete array and index.
+/* ============ undo ============
+ *
+ * One stack of whole-tree snapshots. The bin structure is small — names, links,
+ * colours, pins, nesting — so cloning it before a change costs nothing and
+ * removes any need to write a reverse operation for every action.
+ *
+ * WHAT IT COVERS: the panel's structure. Removing a bin, dropping a folder,
+ * unlinking, renaming, pinning, recolouring, reordering, applying a preset.
+ * Colours are re-pushed to Premiere after an undo, so those really do go back.
+ *
+ * WHAT IT DOES NOT: things already done inside Premiere. A rename or a move was
+ * mirrored into the project when it happened, and undoing here does not rename
+ * it back; files already imported stay imported. The status says so rather than
+ * implying a rollback that did not happen.
+ */
+var undoStack = [];
+var UNDO_MAX = 25;
+
+function pushUndo(label) {
+    undoStack.push({ tree: clone(treeData), label: label || "that" });
+    while (undoStack.length > UNDO_MAX) undoStack.shift();
+    syncUndoBtn();
+}
+function canUndo() { return undoStack.length > 0; }
+function undoLast() {
+    if (!undoStack.length) { setStatus("Nothing to undo.", ""); return; }
+    var step = undoStack.pop();
+    treeData = normalize(step.tree);
+    saveTree();
+    clearFresh();                 // those counts described a state that is gone
+    renderAll();
+    syncUndoBtn();
+    // Colours were pushed to Premiere when they changed, so put the old ones
+    // back too — otherwise undo half-works in a way nobody can see.
+    recolorAll(function () {
+        setStatus("Undid: " + step.label + ".", "ok",
+            "The panel's structure is back. Anything already done inside Premiere — " +
+            "a bin renamed or moved, files already imported — stays as it is.");
+    });
+}
+function syncUndoBtn() {
+    var b = document.getElementById("tbUndo");
+    if (!b) return;
+    var on = canUndo();
+    b.disabled = !on;
+    b.classList.toggle("off", !on);
+    b.setAttribute("data-tip", on
+        ? "Undo <b>" + esc(undoStack[undoStack.length - 1].label) + "</b>Puts the panel's structure back." +
+          "<i>Things already done in Premiere — a rename, a move, files imported — stay as they are.</i>"
+        : "Nothing to undo yet.<i>Removing a bin, dropping a folder, renaming, pinning and recolouring can all be undone.</i>");
+}
+
 /* ============ import log, "new" badges, and search ============ */
 
 var LOG_KEY_BASE = "aip_log::";
@@ -1929,6 +1987,7 @@ function makeGap() {
 // Swap the label for a real input, focused and selected. Enter or clicking away
 // commits (and mirrors the rename into Premiere); Escape puts the old name back.
 function beginRename(row, node, oldName) {
+    pushUndo("renaming “" + oldName + "”");
     var span = row.querySelector(".tname");
     if (!span || span.tagName === "INPUT") return;
     var inp = document.createElement("input");
@@ -1984,9 +2043,18 @@ function makeRow(entry) {
             // a dashed border had to compete with three other dashed meanings
             // Root bins are usually just containers, so "not linked" on them is noise.
             // Sub-bins are where a missing link actually matters.
+            var np0 = binPathOf(node);
+            var gone = hasFolder && linkMissing(np0);
+            var unset = linkUnset(node);
             var chip = hasFolder
-                ? '<span class="tchip" data-tip="Linked to <b>' + esc(node.folder) + '</b>Import pulls new files from here into this bin.<i>Click to open it in Finder.</i>">' + esc(folderLeaf(node.folder)) + '</span>'
-                : (depth > 0 ? '<span class="tnolink">not linked</span>' : '');
+                ? (gone
+                    ? '<span class="tchip gone" data-tip="<b>This folder is missing</b>' + esc(node.folder) +
+                      '<i>Import cannot bring anything in until it points somewhere that exists. Right-click ▸ Link…</i>">' +
+                      esc(folderLeaf(node.folder)) + '</span>'
+                    : '<span class="tchip" data-tip="Linked to <b>' + esc(node.folder) + '</b>Import pulls new files from here into this bin.<i>Click to open it in Finder.</i>">' + esc(folderLeaf(node.folder)) + '</span>')
+                : (unset
+                    ? '<span class="tnolink warn" data-tip="<b>No folder linked</b>This bin has nothing to import from and no sub-bins.<i>Drag a folder onto it, or right-click ▸ Link…</i>">not linked</span>'
+                    : (depth > 0 ? '<span class="tnolink">not linked</span>' : ''));
             var pinDot = node.pinned ? '<span class="pinDot" data-tip="Pinned"></span>' : '';
             var freshN = freshRollup(node, binPathOf(node), false);
             var freshBadge = freshN ? '<span class="newBadge" data-tip="' +
@@ -2008,6 +2076,8 @@ function makeRow(entry) {
                 freshBadge + chip + pinDot +
                 '<div class="rowMenu">' + menuHTML(acts, node.name) + '</div>';
             if (freshN) row.classList.add("hasNew");
+            if (gone) row.classList.add("linkGone");
+            else if (unset) row.classList.add("linkUnset");
 
             /* The row hit-tests itself for a folder dragged in from Finder.
              *
@@ -2042,8 +2112,9 @@ function makeRow(entry) {
                     setStatus("Couldn’t read that folder — right-click the bin and use Link…", "error");
                     return;
                 }
+                pushUndo("linking “" + node.name + "”");
                 node.folder = ensureFolder(paths[0]);
-                saveTree(); renderAll();
+                saveTree(); checkLinks(); renderAll();
                 setStatus("✓ Linked “" + folderLeaf(node.folder) + "” to " + node.name + ".", "ok");
             });
 
@@ -2446,8 +2517,8 @@ function mirrorMoveToPremiere(node, fromPath, baseMsg) {
 // ---- mutations (current project tree) ----
 function handleAct(act, node) {
     var group = selectionFor(node);
-    if (act === "pin") { node.pinned = true; node.pinIdx = nextPinIdx(); saveTree(); renderAll(); }
-    else if (act === "unpin") { node.pinned = false; saveTree(); renderAll(); }
+    if (act === "pin") { pushUndo("pinning “" + node.name + "”"); node.pinned = true; node.pinIdx = nextPinIdx(); saveTree(); renderAll(); }
+    else if (act === "unpin") { pushUndo("unpinning “" + node.name + "”"); node.pinned = false; saveTree(); renderAll(); }
     else if (act === "link") { linkFolder(node); }
     else if (act === "reveal") { revealBin(node); }
     else if (act === "addsub") { addChild(node); }
@@ -2455,6 +2526,7 @@ function handleAct(act, node) {
     else if (act === "remove") { removeBins(group); }
 }
 function unlinkBins(group) {
+    pushUndo(group.length > 1 ? ("unlink " + group.length + " bins") : "unlink");
     var n = 0;
     for (var i = 0; i < group.length; i++) if (group[i].folder) { group[i].folder = ""; n++; }
     if (!n) return;
@@ -2469,9 +2541,10 @@ function removeBins(group) {
     if (kids) bits.push(kids + " sub-bin" + (kids === 1 ? "" : "s"));
     if (links) bits.push(links + " folder link" + (links === 1 ? "" : "s"));
     confirmModal("Remove " + group.length + " bins?",
-        (bits.length ? "This also removes " + bits.join(" and ") + ". " : "") + "It can’t be undone.",
+        (bits.length ? "This also removes " + bits.join(" and ") + ". " : "") + "Undo puts them back.",
         "Remove", true, function (ok) {
             if (!ok) return;
+            pushUndo("removing " + group.length + " bins");
             for (var j = 0; j < group.length; j++) {
                 var p = findParentIn(treeData, group[j]);
                 if (p) p.arr.splice(p.idx, 1);
@@ -2491,6 +2564,9 @@ function countKids(node) {
 // Removing an empty, unlinked bin is harmless; anything else asks first.
 function removeNodeGuarded(node) {
     function drop() {
+        // Inside drop, not above the confirm: cancelling used to leave an undo
+        // step behind that restored a tree nothing had changed.
+        pushUndo("remove “" + node.name + "”");
         var p = findParentIn(treeData, node);
         if (p) { p.arr.splice(p.idx, 1); saveTree(); renderAll(); setStatus("Removed “" + node.name + "”.", ""); }
     }
@@ -2499,10 +2575,11 @@ function removeNodeGuarded(node) {
     var bits = [];
     if (kids) bits.push(kids + " sub-bin" + (kids === 1 ? "" : "s"));
     if (node.folder) bits.push("its folder link");
-    confirmModal("Remove “" + node.name + "”?", "This also removes " + bits.join(" and ") + ". It can’t be undone.",
+    confirmModal("Remove “" + node.name + "”?", "This also removes " + bits.join(" and ") + ". Undo puts it back.",
         "Remove", true, function (ok) { if (ok) drop(); });
 }
 function setColor(node, color) {
+    pushUndo("the colour change");
     var group = selectionFor(node);
     for (var i = 0; i < group.length; i++) group[i].color = color || "";
     saveTree(); renderAll();
@@ -2517,12 +2594,14 @@ function setColor(node, color) {
     setStatus("Colour cleared here — Premiere keeps its last label until you pick a new one.", "");
 }
 function addChild(node) {
+    pushUndo("add a sub-bin");
     if (!node.children) node.children = [];
     node.children.push({ name: "New bin", folder: "", color: "", pinned: false, children: [] });
     node.open = true;                 // unfold so the new sub-bin is visible
     expandTree(); saveTree(); renderAll();
 }
 function addTopBin() {
+    pushUndo("add a bin");
     treeData.push({ name: "New bin", folder: "", color: "", pinned: false, children: [] });
     expandTree(); saveTree(); renderAll();
 }
@@ -2591,6 +2670,7 @@ function insertLinkedBins(res, folders, mirror) {
     setStatus("✓ " + bits.join(" · ") + (res.parent ? " in " + res.parent.name : " at top level") + ".", "ok");
 }
 function dropFoldersAtGap(gapIdx, depth, paths) {
+    pushUndo(paths.length > 1 ? ("adding " + paths.length + " folders") : "adding that folder");
     var folders = [], files = 0;
     for (var i = 0; i < paths.length; i++) { if (isDirPath(paths[i])) folders.push(paths[i]); else files++; }
     if (!folders.length) {
@@ -2610,11 +2690,12 @@ function dropFoldersAtGap(gapIdx, depth, paths) {
     });
 }
 function linkFolder(node) {
+    pushUndo("linking “" + node.name + "”");
     if (!window.cep || !window.cep.fs || !window.cep.fs.showOpenDialog) { setStatus("The folder picker only works inside Premiere.", "error"); return; }
     var result = window.cep.fs.showOpenDialog(false, true, "Choose a folder to link", "");
     if (result && result.data && result.data.length > 0) {
         node.folder = result.data[0];
-        saveTree(); renderAll();
+        saveTree(); checkLinks(); renderAll();
         setStatus("✓ Linked “" + folderLeaf(node.folder) + "” to " + node.name + ".", "ok");
     }
 }
@@ -2681,9 +2762,157 @@ function treeProblem() {
  * separate step — importing already had to create the bins it targets, and doing
  * the whole tree first means bins with no folder linked still get made.
  */
+/* ============ are the links still real? ============
+ *
+ * A folder link is a path saved months ago. Drives get unmounted, projects get
+ * archived, folders get renamed — and until now the panel showed the same tidy
+ * chip either way, so a bin whose folder no longer exists looked exactly like
+ * one that was fine, right up until Import quietly brought in nothing.
+ *
+ * Checked when a project opens and after anything that changes links, so the
+ * answer is current rather than a guess from setup time.
+ *
+ * Held in a map rather than on the nodes: this is a fact about the disk right
+ * now, not part of the structure, and writing it into treeData would put it in
+ * localStorage and into every preset exported from it.
+ */
+var linkState = {};               // tab-joined path -> "missing"
+
+function checkLinks() {
+    var fs = nodeFs();
+    linkState = {};
+    if (!fs || !treeData) return 0;
+    var missing = 0;
+    forEachNode(function (n, np) {
+        if (!n.folder) return;
+        var ok = false;
+        try { ok = !!fs.statSync(n.folder).isDirectory(); } catch (e) { ok = false; }
+        if (!ok) { linkState[np.join("\t")] = "missing"; missing++; }
+    });
+    return missing;
+}
+function linkMissing(np) { return !!(np && linkState[np.join("\t")]); }
+
+/* A bin with no link and no children can never import anything — that is worth
+ * flagging. A bin with children and no link is a container, which is normal and
+ * would be noise. Bom asked for both to show; this is the line between "broken"
+ * and "just how it is". */
+function linkUnset(node) {
+    return !node.folder && !(node.children && node.children.length);
+}
+
+/* Run the check, then say something only when there is something to say. */
+function checkLinksAndReport() {
+    var missing = checkLinks();
+    renderAll();
+    if (!missing) return;
+    var names = [];
+    forEachNode(function (n, np) { if (linkMissing(np)) names.push(n.name); });
+    setStatus(missing + " bin" + (missing === 1 ? "" : "s") + " point at folders that are gone.", "error",
+        "<b>Missing folders</b>" + esc(names.slice(0, 12).join(", ")) +
+        (names.length > 12 ? " …" : "") +
+        "<i>Right-click a bin and use Link… to point it somewhere that exists.</i>");
+}
+
+/* ============ mirror subfolders into bins ============
+ *
+ * A linked folder that grows a new subfolder should grow a matching sub-bin.
+ * Without this the panel only ever imports the top level of each folder, and a
+ * subfolder added after setup is invisible for good — the files are there, the
+ * import says zero, and nothing explains why.
+ *
+ * Runs as part of Import, so it keeps up on its own rather than needing to be
+ * remembered. An existing bin with the right name is ADOPTED rather than
+ * duplicated, and if it had no folder it gets linked to the one it is named
+ * after — which is what someone who made the bin by hand meant.
+ *
+ * Guards, because this writes to the bin structure: hidden folders and macOS
+ * bundles are skipped, nesting stops at five, and no single run may create
+ * more than two hundred bins. A runaway here would be someone's project.
+ */
+var MIRROR_KEY = "aip_mirrorSubfolders";
+var MIRROR_MAX_NEW = 200, MIRROR_MAX_DEPTH = 5;
+var BUNDLE_RE = /\.(app|bundle|framework|photoslibrary|fcpbundle|lrdata|aplibrary|rdc|dSYM)$/i;
+
+function mirrorOn() { return localStorage.getItem(MIRROR_KEY) !== "0"; }
+function setMirror(on) {
+    localStorage.setItem(MIRROR_KEY, on ? "1" : "0");
+    syncMirrorLabel();
+}
+function syncMirrorLabel() {
+    var el = document.getElementById("giMirrorLabel");
+    if (el) el.textContent = mirrorOn() ? "Mirror subfolders: on" : "Mirror subfolders: off";
+}
+
+function subfoldersOf(fs, dir) {
+    var out = [];
+    var names;
+    try { names = fs.readdirSync(dir); } catch (e) { return out; }
+    for (var i = 0; i < names.length; i++) {
+        var nm = String(names[i]);
+        if (nm.charAt(0) === ".") continue;              // hidden, and .DS_Store
+        if (BUNDLE_RE.test(nm)) continue;                // a package is not a folder of clips
+        var full = joinPath(dir, nm);
+        try { if (!fs.statSync(full).isDirectory()) continue; } catch (e2) { continue; }
+        out.push({ name: nm, path: full });
+    }
+    return out;
+}
+
+/* Returns how many bins were created. Does not save or render — the caller
+ * decides, so an import can do both in one pass. */
+function mirrorSubfolders() {
+    var fs = nodeFs();
+    if (!fs) return 0;
+    var added = 0;
+    for (var t = 0; t < treeData.length; t++) {
+        (function walk(node, depth) {
+            if (depth > MIRROR_MAX_DEPTH || !node.folder || added >= MIRROR_MAX_NEW) return;
+            var subs = subfoldersOf(fs, node.folder);
+            if (!node.children) node.children = [];
+            for (var i = 0; i < subs.length && added < MIRROR_MAX_NEW; i++) {
+                var have = null;
+                for (var c = 0; c < node.children.length; c++) {
+                    if (String(node.children[c].name).toLowerCase() === subs[i].name.toLowerCase()) {
+                        have = node.children[c]; break;
+                    }
+                }
+                if (!have) {
+                    have = { name: subs[i].name, folder: subs[i].path, color: "", pinned: false, children: [] };
+                    node.children.push(have);
+                    added++;
+                } else if (!have.folder) {
+                    // A bin someone made by hand, named after the folder: link
+                    // it rather than making a second bin with the same name.
+                    have.folder = subs[i].path;
+                }
+                walk(have, depth + 1);
+            }
+        })(treeData[t], 1);
+    }
+    return added;
+}
+
 function importAll() {
     var bad = treeProblem();
     if (bad) { setStatus(bad, "error"); return; }
+
+    /* Pick up subfolders added since last time, before working out what to
+     * import — otherwise the new folder's files have nowhere to go and the run
+     * reports zero with nothing to explain it. Snapshotted first, so a mirror
+     * that grabs more than expected is one Undo away. */
+    var mirrored = 0;
+    if (mirrorOn()) {
+        var beforeMirror = clone(treeData);
+        mirrored = mirrorSubfolders();
+        if (mirrored) {
+            undoStack.push({ tree: beforeMirror, label: "mirroring " + mirrored + " folder" + (mirrored === 1 ? "" : "s") });
+            while (undoStack.length > UNDO_MAX) undoStack.shift();
+            syncUndoBtn();
+            saveTree();
+            renderAll();
+        }
+    }
 
     var paths = [];
     forEachNode(function (n, np) { paths.push(np.join("\t")); });
@@ -2703,6 +2932,7 @@ function importAll() {
         }
         var made = parseInt(String(res).substring(3), 10);
         var madeBit = (!isNaN(made) && made > 0) ? (made + " bin" + (made === 1 ? "" : "s") + " created · ") : "";
+        if (mirrored) madeBit = mirrored + " folder" + (mirrored === 1 ? "" : "s") + " mirrored · " + madeBit;
         recolorAll();
         if (!jobs.length) {
             setStatus(madeBit ? ("✓ " + madeBit.replace(" · ", ".")) : "Bins are already there — link a folder to import files.", "ok");
@@ -2715,6 +2945,7 @@ function importAll() {
 function runImports(jobs, madeBit) {
     var total = 0, errors = [], i = 0;
     var got = [];                     // { bin, files[] } for the log and the badges
+    var trace = [];                   // one line per bin, whatever happened
     clearFresh();
     function next() {
         if (i >= jobs.length) {
@@ -2722,14 +2953,22 @@ function runImports(jobs, madeBit) {
             /* Log the run before the colour pass, so a slow recolour cannot lose
              * the record of what arrived. Only runs that brought something in:
              * a log full of "imported 0" entries buries the ones that matter. */
-            if (total > 0) {
-                appendLog({ at: new Date().toISOString(), total: total, bins: got });
+            if (total > 0 || errors.length) {
+                appendLog({ at: new Date().toISOString(), total: total, bins: got,
+                            errors: errors.slice(), trace: trace.slice() });
             }
+            var detail = trace.length ? ("What Premiere reported, bin by bin:<br>" +
+                esc(trace.join("\n")).replace(/\n/g, "<br>")) : "";
             recolorAll(function () {
+                checkLinks();         // mirroring may have linked new bins
                 renderAll();          // paint the "new" badges
-                if (!errors.length) { setStatus("✓ " + madeBit + "imported " + files + ".", "ok"); return; }
+                if (!errors.length) {
+                    setStatus("✓ " + madeBit + "imported " + files + ".", "ok", detail);
+                    return;
+                }
                 setStatus(madeBit + (total ? "imported " + files + " · " : "") +
-                    errors.length + " bin" + (errors.length === 1 ? "" : "s") + " failed — " + errors[0], "error");
+                    errors.length + " bin" + (errors.length === 1 ? "" : "s") + " failed — " + errors[0],
+                    "error", detail);
             });
             return;
         }
@@ -2737,10 +2976,16 @@ function runImports(jobs, madeBit) {
         setStatus("Importing " + (i + 1) + " of " + jobs.length + "…", "");
         cs.evalScript("aip_import(" + q(j.bin) + "," + q(j.folder) + "," + q(EXTENSIONS) + "," + q(String(j.ci)) + ")", function (res) {
             var leaf = j.bin.split("\t").pop();
-            if (res && String(res).indexOf("ERR:") === 0) errors.push(leaf + ": " + String(res).substring(4));
-            else {
+            if (res && String(res).indexOf("ERR:") === 0) {
+                errors.push(leaf + ": " + String(res).substring(4));
+                trace.push(leaf + " ← " + j.folder + "  →  " + String(res));
+            } else {
                 var txt = String(res == null ? "" : res);
                 var n = parseInt(txt, 10);
+                // Keep what Premiere said about THIS bin, note included. A run
+                // that imports nothing is the hardest thing to debug from the
+                // outside, and "0" alone says nothing about why.
+                trace.push(leaf + " ← " + j.folder + "  →  " + txt.replace(/\u0001/g, " · "));
                 if (isNaN(n)) errors.push(leaf + ": Premiere didn’t run the import (" + (res || "no response") + ")");
                 else {
                     total += n;
@@ -3059,7 +3304,19 @@ function renderLog() {
         var bins = run.bins || [];
         h += '<div class="logRun">' +
              '<div class="logWhen">' + esc(fmtWhen(run.at)) + '</div>' +
-             '<div class="logTotal">' + (run.total || 0) + " file" + ((run.total === 1) ? "" : "s") + '</div>';
+             '<div class="logTotal">' + (run.total || 0) + " file" + ((run.total === 1) ? "" : "s") +
+             ((run.errors && run.errors.length) ? ' · <span class="logFail">' + run.errors.length + ' failed</span>' : "") +
+             '</div>';
+        // A run that failed is the one worth reading, so it is not hidden behind
+        // a hover here — this view exists to be looked at.
+        if (run.errors) for (var er = 0; er < run.errors.length; er++) {
+            h += '<div class="logErr">' + esc(run.errors[er]) + '</div>';
+        }
+        if (run.trace && run.errors && run.errors.length) {
+            for (var tr = 0; tr < run.trace.length; tr++) {
+                h += '<div class="logTrace">' + esc(run.trace[tr]) + '</div>';
+            }
+        }
         for (var b = 0; b < bins.length; b++) {
             var bin = bins[b] || {};
             var leaf = String(bin.bin || "").split("\t").pop();
@@ -3206,9 +3463,10 @@ function toggleGear() {
 function closeGear() { document.getElementById("gearPop").style.display = "none"; }
 function resetStructure() {
     confirmModal("Reset this project’s structure?",
-        "Back to the built-in default. Clears this project’s bins, folder links, colors and pins.",
+        "Back to the built-in default. Clears this project’s bins, folder links, colors and pins. Undo puts it back.",
         "Reset", true, function (ok) {
             if (!ok) return;
+            pushUndo("the reset");          // only once it is actually happening
             treeData = normalize(clone(DEFAULT_TEMPLATE));
             saveTree(); renderAll();
             setStatus("Structure reset to default.", "ok");
@@ -3271,6 +3529,9 @@ function refreshProject(force) {
         } else {
             treeData = t;
             renderAll();
+            // First look at this project: confirm the saved links still exist
+            // before anyone trusts them.
+            checkLinksAndReport();
         }
     });
 }
@@ -3398,6 +3659,7 @@ function clearPreset() {
 }
 // Apply builderTree into the current project, keeping links/pins where names match.
 function applyPresetToProject() {
+    pushUndo("applying the preset");
     var keep = {};
     forEachNode(function (n, np) { keep[np.join("\t")] = { folder: n.folder, pinned: n.pinned }; });
     function build(nodes, prefix) {
@@ -3992,12 +4254,13 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("tbReload").onclick = function () {
         refreshProject(true); setStatus("Reloaded for this project.", "");
     };
-    document.getElementById("tbRecolor").onclick = function () {
-        setStatus("Re-applying colours…", "");
-        recolorAll(function (n) {
-            setStatus(n ? ("Coloured " + n + " bin" + (n === 1 ? "" : "s") + " and their clips.")
-                        : "No bins have a colour set.", n ? "ok" : "");
-        });
+    document.getElementById("tbUndo").onclick = undoLast;
+    document.getElementById("giMirror").onclick = function () {
+        closeGear();
+        var on = !mirrorOn();
+        setMirror(on);
+        setStatus(on ? "Import will mirror subfolders into sub-bins."
+                     : "Import will leave your structure alone.", "ok");
     };
     document.getElementById("giLog").onclick = function () { closeGear(); openLog(); };
     document.getElementById("logBack").onclick = function () { showView("main"); };
@@ -4009,6 +4272,8 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     };
     wireSearch();
+    syncUndoBtn();
+    syncMirrorLabel();
     document.getElementById("giUpdate").onclick = function () { closeGear(); checkForUpdate(true); };
     // The escape hatch for the new tile-click behaviour: anyone who preferred
     // the old one gets it back here, with no reinstall and no restart.
