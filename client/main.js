@@ -22,12 +22,23 @@ var cs = new CSInterface();
 // Bump this AND ExtensionBundleVersion in CSXS/manifest.xml together — the
 // shareable-zip script fails the build if the two ever disagree, because
 // "which version are you on?" has to have one answer.
-var VERSION = "1.2.0";
+var VERSION = "1.3.2";
 
+/*
+ * What Import picks up. A format missing from here is skipped in silence — the
+ * file simply never appears in the bin and nothing says why — so the list is
+ * worth being generous with.
+ *
+ * Everything here is a format Premiere reads natively. Camera formats that need
+ * a manufacturer plug-in are deliberately absent, .braw above all: aip_import
+ * hands the whole batch to importFiles in one call, so a single file Premiere
+ * cannot open fails the entire bin's import rather than just itself.
+ */
 var EXTENSIONS =
-    "mp4,mov,m4v,avi,mxf,mkv,wmv,mts," +   // video
-    "png,jpg,jpeg,tif,tiff,psd,gif,bmp," + // images
-    "wav,mp3,aac,aif,aiff,m4a";            // audio
+    "mp4,mov,m4v,avi,mxf,mkv,wmv,mts,m2ts,mpg,mpeg,3gp," +   // video
+    "r3d,ari,dpx,exr,dng," +                                 // camera / frame sequences
+    "png,jpg,jpeg,tif,tiff,psd,gif,bmp,webp,heic,heif,ai," + // images
+    "wav,mp3,aac,aif,aiff,m4a,flac";                         // audio
 
 var PRESETS_KEY = "aip_presets";
 var COLLAPSE_KEY = "aip2_collapsed";
@@ -200,6 +211,41 @@ function loadPremiereLabels() {
     PALETTE = got;
     rebuildLabelIndex();
     return true;
+}
+
+/*
+ * How this Premiere is set to open a bin on double-click.
+ *
+ * 0 = in place, 1 = new tab, 2 = new window (BE.Prefs.Flexbin.*).
+ *
+ * This matters because a bin opened as its OWN TAB is not a project view:
+ * app.getProjectViewIDs() reports one view while a "Bin: X" tab is in front.
+ * Scripting cannot see that tab, select into it, or bring the real Project
+ * panel forward. So with the default setting, jumping to a bin can appear to
+ * do nothing — and four rounds went into chasing that before we knew why.
+ *
+ * Read from the same prefs file the 16 label colours come from. Returns -1 when
+ * it cannot be read, which means "say nothing" rather than "assume the worst".
+ */
+var binOpenPref = -1;
+function loadBinOpenPref() {
+    var fs = nodeFs();
+    if (!fs) return;
+    var f = premierePrefsPath();
+    if (!f) return;
+    var text;
+    try { text = fs.readFileSync(f, "utf8"); } catch (e) { return; }
+    var m = /<BE\.Prefs\.Flexbin\.DoubleClickBehavior>(\d+)</.exec(text);
+    if (m) binOpenPref = parseInt(m[1], 10);
+}
+/* Appended to a jump's status when bins open as tabs. Not a popup and not a
+ * blocker: the jump may well be landing correctly in the main Project panel,
+ * and the only thing wrong is which panel is in front. */
+function binTabNote() {
+    if (binOpenPref <= 0) return "";
+    return " (Bins open in a " + (binOpenPref === 2 ? "new window" : "new tab") +
+        " — a bin tab can’t be jumped to. Alt-double-click a bin, or set" +
+        " Settings ▸ General ▸ Bins ▸ Double-click to Open in Place.)";
 }
 
 // Tint helpers: pinned tiles and row rails are drawn from the bin's own colour.
@@ -394,17 +440,513 @@ function renderAll() {
     renderPinned();
     renderTree();
     applyCollapsed();
+    syncContentsView();
+}
+
+/* ============================ BIN CONTENTS ============================
+ *
+ * Premiere exposes no way to open a bin, expand one, or scroll the Project
+ * panel to it — select() only highlights it, which still left the bin to be
+ * found by hand. So the contents are brought here instead.
+ *
+ * contentsPath is the bin being shown, as an array of names, or null when the
+ * bin structure is showing instead. Everything else derives from it.
+ */
+var contentsPath = null;
+var contentsRoot = null;            // the path the view was opened at — where back returns to
+var contentsRows = [];              // the listing as Premiere gave it — never reordered
+var contentsShown = [];             // what is on screen, after sorting
+var TILECLICK_KEY = "aip_tileclick";
+
+/* What a plain click on a pinned tile does. Kept switchable because it changes
+ * a habit: anyone who preferred the old behaviour can have it back from the
+ * gear menu without reinstalling anything. */
+function tileClickMode() {
+    return localStorage.getItem(TILECLICK_KEY) === "reveal" ? "reveal" : "contents";
+}
+function setTileClickMode(mode) {
+    localStorage.setItem(TILECLICK_KEY, mode === "reveal" ? "reveal" : "contents");
+    if (mode === "reveal") closeContents();
+    syncTileModeLabel();
+    renderAll();
+}
+/* The gear item names what the click WILL do after pressing it, not what it
+ * does now — a menu item that describes the current state reads as a status
+ * line and gets clicked by accident. */
+function syncTileModeLabel() {
+    var el = document.getElementById("giTileModeLabel");
+    if (el) el.textContent = tileClickMode() === "contents"
+        ? "Pinned click: highlight instead"
+        : "Pinned click: show contents";
+}
+
+function syncContentsView() {
+    var cv = document.getElementById("contentsView");
+    var sw = document.getElementById("structWrap");
+    if (!cv || !sw) return;
+    var on = !!contentsPath;
+    cv.style.display = on ? "flex" : "none";
+    sw.style.display = on ? "none" : "flex";
+}
+
+function closeContents() {
+    contentsPath = null;
+    contentsRoot = null;
+    contentsRows = [];
+    contentsShown = [];
+    syncContentsView();
+}
+
+/* Records are kind ⁠| index ⁠| name ⁠| meta ⁠| offline, one per line — see
+ * aip_binContents. A short record is skipped rather than half-read. */
+function parseContents(body) {
+    var out = [];
+    if (body === "") return out;
+    var lines = body.split("\n");
+    for (var i = 0; i < lines.length; i++) {
+        if (lines[i] === "") continue;
+        var f = lines[i].split(FIELD_SEP);
+        if (f.length < 5) continue;
+        out.push({ kind: f[0], idx: f[1], name: f[2], meta: f[3], off: f[4] === "1" });
+    }
+    return out;
+}
+
+var C_ICONS = {
+    bin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+    film: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 10h18M3 15h18"/></svg>',
+    audio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></svg>',
+    img: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m5 18 5-5 4 4 2-2 3 3"/></svg>',
+    warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 2 20h20z"/><path d="M12 10v4M12 17h.01"/></svg>',
+    plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>',
+    play: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>'
+};
+var C_AUDIO = ["WAV", "MP3", "AIF", "AIFF", "M4A", "AAC", "FLAC"];
+var C_IMAGE = ["PNG", "JPG", "JPEG", "TIF", "TIFF", "PSD", "AI", "EXR", "GIF", "WEBP", "SVG"];
+
+/* Extension → type. Anything with no extension is a sequence, title or colour
+ * matte: real items, but not a file kind, so they group as "other" rather than
+ * being guessed at as video. */
+var C_VIDEO = ["MP4", "MOV", "MXF", "AVI", "MKV", "M4V", "WMV", "R3D", "BRAW", "ARI", "MTS", "M2TS", "WEBM", "PRORES"];
+function contentsType(rec) {
+    if (rec.kind === "B") return "Bin";
+    if (rec.meta === "") return "Other";
+    if (C_AUDIO.indexOf(rec.meta) >= 0) return "Audio";
+    if (C_IMAGE.indexOf(rec.meta) >= 0) return "Image";
+    if (C_VIDEO.indexOf(rec.meta) >= 0) return "Video";
+    return "Other";
+}
+function contentsIcon(rec) {
+    if (rec.off) return C_ICONS.warn;
+    var t = contentsType(rec);
+    if (t === "Bin") return C_ICONS.bin;
+    if (t === "Audio") return C_ICONS.audio;
+    if (t === "Image") return C_ICONS.img;
+    return C_ICONS.film;
+}
+
+/* --- sorting ---
+ *
+ * Sorting only changes what is DRAWN. Every row keeps rec.idx, the item's real
+ * position in Premiere's bin, so clicking a row after re-sorting still acts on
+ * the right clip. Sub-bins stay at the top in every mode: they are containers,
+ * not contents, and mixing them into a filename sort buries them.
+ */
+/* Direction, shared by both sort controls.
+ *
+ * Every mode reverses, not just the alphabetical one: "biggest bins last",
+ * "offline last", "the end of the project first" are all reasonable things to
+ * want, and a reverse that only worked on one mode would be a trap. */
+function sortDir(key) { return localStorage.getItem(key) === "desc" ? "desc" : "asc"; }
+function flipDir(key) { localStorage.setItem(key, sortDir(key) === "desc" ? "asc" : "desc"); }
+var SORT_DIR_KEY = "aip_contentsSortDir";
+var TREE_DIR_KEY = "aip_treeSortDir";
+
+var SORT_KEY = "aip_contentsSort";
+var SORT_MODES = ["order", "name", "type", "offline"];
+var SORT_LABELS = { order: "Project order", name: "Name A–Z", type: "File type", offline: "Offline first" };
+
+function closeSortPop() {
+    var all = document.querySelectorAll(".cSortWrap");
+    for (var i = 0; i < all.length; i++) {
+        all[i].classList.remove("open");
+        var pop = all[i].querySelector(".cSortPop");
+        if (pop) pop.style.display = "none";
+    }
+}
+/* Both sort controls behave identically; only where they read and write
+ * differs. Wiring them from one place keeps them that way. */
+function wireSortControl(wrap, onPick) {
+    if (!wrap || wrap.__wired) return;
+    wrap.__wired = true;
+    var btn = wrap.querySelector(".cSort");
+    btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        // The bin-structure one lives inside the collapse header; without this
+        // opening the menu would also fold the tree away underneath it.
+        e.preventDefault();
+        var open = wrap.classList.contains("open");
+        closeSortPop();
+        if (!open) { wrap.classList.add("open"); wrap.querySelector(".cSortPop").style.display = "flex"; }
+    });
+    var opts = wrap.querySelectorAll(".cSortOpt");
+    for (var i = 0; i < opts.length; i++) {
+        opts[i].addEventListener("click", function (e) {
+            e.stopPropagation();
+            e.preventDefault();
+            closeSortPop();
+            onPick(this.getAttribute("data-sort"));
+        });
+    }
+    document.addEventListener("click", closeSortPop);
+}
+/* One implementation for both reverse buttons: the arrow rotation IS the
+ * state, so there is no second icon to keep in step with what is stored. */
+function wireRev(btn, key, after) {
+    if (!btn || btn.__wired) return;
+    btn.__wired = true;
+    btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        e.preventDefault();
+        flipDir(key);
+        syncRev(btn, key);
+        after();
+    });
+    syncRev(btn, key);
+}
+function syncRev(btn, key) {
+    if (!btn) return;
+    var desc = sortDir(key) === "desc";
+    btn.classList.toggle("desc", desc);
+    btn.setAttribute("data-tip", desc
+        ? "Currently reversed. Click for normal order.<i>Applies to whichever order is chosen, not just A–Z.</i>"
+        : "Reverse the order.<i>Applies to whichever order is chosen, not just A–Z.</i>");
+}
+
+function syncTreeSortControl() {
+    var wrap = document.querySelector(".tSortWrap");
+    if (!wrap) return;
+    var mode = treeSort();
+    var now = wrap.querySelector(".tSortNow");
+    if (now) now.textContent = TREE_SORT_LABELS[mode] || TREE_SORT_LABELS.manual;
+    var opts = wrap.querySelectorAll(".tSortOpt");
+    for (var i = 0; i < opts.length; i++) {
+        opts[i].classList.toggle("on", opts[i].getAttribute("data-sort") === mode);
+    }
+    syncRev(document.querySelector(".tRev"), TREE_DIR_KEY);
+}
+/* Keep the button label and the tick in step with the stored value. Called on
+ * every paint so a mode restored from a previous session shows correctly. */
+function syncSortControl() {
+    var cv = document.getElementById("contentsView");
+    if (!cv) return;
+    var mode = contentsSort();
+    var now = cv.querySelector(".cSortNow");
+    if (now) now.textContent = SORT_LABELS[mode] || SORT_LABELS.order;
+    var opts = cv.querySelectorAll(".cSortOpt");
+    for (var i = 0; i < opts.length; i++) {
+        opts[i].classList.toggle("on", opts[i].getAttribute("data-sort") === mode);
+    }
+}
+function contentsSort() {
+    var v = localStorage.getItem(SORT_KEY);
+    return SORT_MODES.indexOf(v) >= 0 ? v : "order";
+}
+function sortContents(rows, mode) {
+    // Decorate with the original position so every comparison can fall back to
+    // project order — a sort with no tiebreak reshuffles equal rows on redraw.
+    var dec = [];
+    for (var i = 0; i < rows.length; i++) dec.push({ r: rows[i], at: i });
+    var byName = function (a, b) {
+        var x = a.r.name.toLowerCase(), y = b.r.name.toLowerCase();
+        return x < y ? -1 : (x > y ? 1 : a.at - b.at);
+    };
+    var flip = (sortDir(SORT_DIR_KEY) === "desc") ? -1 : 1;
+    dec.sort(function (a, b) {
+        var ab = a.r.kind === "B", bb = b.r.kind === "B";
+        // Bins first is structural, not part of the ordering, so reversing the
+        // sort must not bury the folders at the bottom.
+        if (ab !== bb) return ab ? -1 : 1;
+        return flip * cmp(a, b);
+    });
+    function cmp(a, b) {
+        if (mode === "name") return byName(a, b);
+        if (mode === "type") {
+            var at = contentsType(a.r), bt = contentsType(b.r);
+            if (at !== bt) return at < bt ? -1 : 1;
+            return byName(a, b);
+        }
+        if (mode === "offline") {
+            if (a.r.off !== b.r.off) return a.r.off ? -1 : 1;
+            return a.at - b.at;
+        }
+        return a.at - b.at;                               // project order
+    }
+    var out = [];
+    for (var j = 0; j < dec.length; j++) out.push(dec[j].r);
+    return out;
+}
+
+/* The node in treeData matching a bin path, if the panel knows about it. Used
+ * for the colour dot and the folder button — a bin can exist in Premiere and
+ * not be in the panel's structure, which is fine, it just has less to show. */
+function nodeAtBinPath(path) {
+    var res = null;
+    forEachNode(function (n, np) {
+        if (np.length !== path.length) return;
+        for (var i = 0; i < np.length; i++) if (np[i] !== path[i]) return;
+        res = n;
+    });
+    return res;
+}
+
+/* reveal: also select the bin and its first file in Premiere, so the Project
+ * panel ends up inside the same bin the list is showing. Off for a refresh
+ * after a stale click — that is the panel catching up, not a place to go. */
+function openContents(path, root, reveal) {
+    if (reveal) revealBinPath(path, path[path.length - 1] || "");
+    contentsPath = path.slice();
+    contentsRoot = root ? root.slice() : path.slice();
+    contentsRows = [];
+    contentsShown = [];
+    syncContentsView();
+    var cv = document.getElementById("contentsView");
+    if (!cv) return;
+
+    var node = nodeAtBinPath(contentsPath);
+    var name = contentsPath[contentsPath.length - 1] || "";
+    cv.querySelector(".cName").textContent = name;
+    cv.querySelector(".cPath").textContent = contentsPath.join(" › ") + " · loading…";
+    var dot = cv.querySelector(".cDot");
+    dot.style.display = (node && node.color) ? "block" : "none";
+    if (node && node.color) dot.style.background = node.color;
+    var fol = cv.querySelector(".cFolder");
+    fol.style.display = (node && node.folder) ? "flex" : "none";
+    fol.__folder = node ? node.folder : "";
+    cv.querySelector(".cList").innerHTML = "";
+    cv.querySelector(".cFoot").textContent = "";
+
+    var asked = contentsPath.join("\t");
+    cs.evalScript("aip_binContents(" + q(asked) + ")", function (res) {
+        // A second click while this was in flight wins; drop the stale answer
+        // rather than painting one bin's contents under another bin's name.
+        if (!contentsPath || contentsPath.join("\t") !== asked) return;
+        renderContents(String(res == null ? "" : res));
+    });
+}
+
+function renderContents(res) {
+    var cv = document.getElementById("contentsView");
+    if (!cv) return;
+    var list = cv.querySelector(".cList");
+    var foot = cv.querySelector(".cFoot");
+    var crumb = contentsPath.join(" › ");
+
+    if (res === "NOBIN") {
+        cv.querySelector(".cPath").textContent = crumb;
+        list.innerHTML = '<div class="cEmpty">This bin isn’t in the project yet.<br>' +
+            '<span style="font-size:10px">Import or Create structure will add it.</span></div>';
+        return;
+    }
+    if (res.indexOf("ERR:") === 0) {
+        cv.querySelector(".cPath").textContent = crumb;
+        list.innerHTML = '<div class="cEmpty">Couldn’t read this bin.</div>';
+        setStatus(res.substring(4), "error");
+        return;
+    }
+
+    var trunc = res.indexOf("TRUNC:") === 0;
+    var body = res.substring(res.indexOf(":") + 1);
+    contentsRows = parseContents(body);
+
+    var bins = 0, offline = 0;
+    for (var i = 0; i < contentsRows.length; i++) {
+        if (contentsRows[i].kind === "B") bins++;
+        if (contentsRows[i].off) offline++;
+    }
+    var count = contentsRows.length === 0 ? "empty"
+        : contentsRows.length + (contentsRows.length === 1 ? " item" : " items");
+    cv.querySelector(".cPath").textContent = crumb + " · " + count + (offline ? " · " + offline + " offline" : "");
+
+    contentsTrunc = trunc;
+    contentsHasBins = bins > 0;
+    paintContents();
+}
+
+/* Drawing is separate from fetching so changing the sort is instant and does
+ * not ask Premiere for the same bin again. */
+var contentsTrunc = false, contentsHasBins = false;
+
+function paintContents() {
+    var cv = document.getElementById("contentsView");
+    if (!cv || !contentsPath) return;
+    var list = cv.querySelector(".cList"), foot = cv.querySelector(".cFoot");
+    var bar = cv.querySelector(".cBar");
+
+    if (contentsRows.length === 0) {
+        list.innerHTML = '<div class="cEmpty">This bin is empty.<br>' +
+            '<span style="font-size:10px">Drop files on its tile to fill it.</span></div>';
+        foot.textContent = "";
+        if (bar) bar.style.display = "none";       // nothing to order
+        return;
+    }
+    if (bar) bar.style.display = "flex";
+    syncSortControl();
+    syncRev(cv.querySelector(".cRev"), SORT_DIR_KEY);
+
+    // Sort a copy. Overwriting contentsRows would make each sort build on the
+    // last one, so "project order" would stop meaning project order after the
+    // first time anything else was chosen.
+    contentsShown = sortContents(contentsRows, contentsSort());
+
+    var html = "";
+    for (var j = 0; j < contentsShown.length; j++) {
+        var r = contentsShown[j];
+        var cls = "cRow t" + contentsType(r) +
+            (r.kind === "B" ? " isBin" : "") + (r.off ? " off" : "");
+        var meta = r.off ? "offline" : r.meta;
+        html += '<div class="' + cls + '" data-row="' + j + '">' +
+            '<span class="cIco">' + contentsIcon(r) + '</span>' +
+            '<span class="cItem">' + esc(r.name) + '</span>' +
+            (r.kind === "B" ? ""
+                : '<span class="cIns" data-tip="Drop this clip into the open sequence at the playhead, on ' +
+                  (contentsType(r) === "Audio" ? "A1" : "V1") +
+                  '.<i>Clips already there ripple right — nothing is overwritten.</i>">' + C_ICONS.plus + '</span>' +
+                  '<span class="cPlay" data-tip="Preview it in the Source Monitor, without touching the timeline.">' +
+                  C_ICONS.play + '</span>') +
+            '<span class="cMeta">' + esc(meta) + '</span></div>';
+    }
+    list.innerHTML = html;
+    foot.textContent = contentsTrunc
+        ? "Showing the first " + contentsShown.length + " — this bin has more."
+        : (contentsHasBins ? "click a clip to select it · double-click opens the Source Monitor"
+                           : "double-click a clip to open it in the Source Monitor");
+}
+
+function contentsRowAt(el) {
+    var row = el && el.closest ? el.closest(".cRow") : null;
+    if (!row) return null;
+    var i = parseInt(row.getAttribute("data-row"), 10);
+    if (isNaN(i) || !contentsShown[i]) return null;
+    return { rec: contentsShown[i], el: row };
+}
+
+function contentsClick(hit) {
+    var r = hit.rec;
+    if (r.kind === "B") { openContents(contentsPath.concat([r.name]), contentsRoot, true); return; }
+    var list = hit.el.parentNode;
+    var was = list.querySelectorAll(".cRow.sel");
+    for (var i = 0; i < was.length; i++) was[i].classList.remove("sel");
+    hit.el.classList.add("sel");
+    cs.evalScript("aip_selectChild(" + q(contentsPath.join("\t")) + "," + r.idx + "," + q(r.name) + ")",
+        function (res) {
+            res = String(res == null ? "" : res);
+            if (res === "OK") setStatus("Selected “" + r.name + "” in the project.", "ok");
+            else if (res === "STALE") { setStatus("This bin changed in Premiere — refreshed.", ""); openContents(contentsPath, contentsRoot); }
+            else if (res === "NOSUPPORT") setStatus("This Premiere build can’t select a clip.", "error");
+            else setStatus("Couldn’t select “" + r.name + "”.", "error");
+        });
+}
+
+/* Send a clip to the timeline. The Project panel cannot be driven from here, so
+ * the useful answer is to make going there unnecessary. */
+function insertToTimeline(hit) {
+    var r = hit.rec;
+    if (r.kind === "B") return;
+    if (r.off) { setStatus("“" + r.name + "” is offline — relink it in Premiere first.", "error"); return; }
+    var isAudio = contentsType(r) === "Audio" ? "1" : "0";
+    cs.evalScript("aip_insertToTimeline(" + q(contentsPath.join("\t")) + "," + r.idx + "," +
+                  q(r.name) + "," + q(isAudio) + ")", function (res) {
+        res = String(res == null ? "" : res);
+        if (res.indexOf("OK:") === 0) {
+            setStatus("Inserted “" + r.name + "” at the playhead on " + res.substring(3) + ".", "ok");
+        } else if (res === "NOSEQ") {
+            setStatus("No sequence open — open one and put the playhead where you want it.", "error");
+        } else if (res === "NOTRACK") {
+            setStatus("That sequence has no track of the right kind for “" + r.name + "”.", "error");
+        } else if (res === "STALE") {
+            setStatus("This bin changed in Premiere — refreshed.", ""); openContents(contentsPath, contentsRoot);
+        } else {
+            setStatus("Couldn’t insert “" + r.name + "”.", "error");
+        }
+    });
+}
+
+function contentsDblClick(hit) {
+    var r = hit.rec;
+    if (r.kind === "B") return;                  // the single click already drilled in
+    if (r.off) { setStatus("“" + r.name + "” is offline — relink it in Premiere first.", "error"); return; }
+    cs.evalScript("aip_openChildInSource(" + q(contentsPath.join("\t")) + "," + r.idx + "," + q(r.name) + ")",
+        function (res) {
+            res = String(res == null ? "" : res);
+            if (res === "OK") setStatus("Opened “" + r.name + "” in the Source Monitor.", "ok");
+            else if (res === "STALE") { setStatus("This bin changed in Premiere — refreshed.", ""); openContents(contentsPath, contentsRoot); }
+            else if (res === "NOSUPPORT") setStatus("This Premiere build has no scriptable Source Monitor.", "error");
+            else setStatus("Couldn’t open “" + r.name + "”.", "error");
+        });
+}
+
+/*
+ * Wiring must survive being called twice. The rest of boot uses `onclick =`,
+ * which overwrites; addEventListener stacks, and a second back-handler made one
+ * click walk up two levels. Guarding here rather than relying on boot running
+ * exactly once, because a listener that silently doubles is invisible until it
+ * does something absurd.
+ */
+function wireContents() {
+    var cv = document.getElementById("contentsView");
+    if (!cv || cv.__wired) return;
+    cv.__wired = true;
+    cv.querySelector(".cBack").addEventListener("click", function () {
+        // Back to where you came in, not to the top of the tree. Opening the
+        // "Footage › Kling AI" tile and pressing back should return to the bin
+        // structure — walking up to Footage would show a bin you never asked
+        // for. Only sub-bins you drilled into are worth popping one at a time.
+        if (contentsPath && contentsRoot && contentsPath.length > contentsRoot.length) {
+            openContents(contentsPath.slice(0, -1), contentsRoot);
+        } else {
+            closeContents();
+        }
+    });
+    cv.querySelector(".cFolder").addEventListener("click", function () {
+        var f = this.__folder;
+        if (f) openInFinder(f);
+    });
+    wireRev(cv.querySelector(".cRev"), SORT_DIR_KEY, paintContents);
+    wireSortControl(cv.querySelector(".cSortWrap"), function (mode) {
+        localStorage.setItem(SORT_KEY, mode);
+        // Redraw only. The rows are already in hand, and every one keeps the
+        // item's real position in Premiere, so re-ordering what is drawn can
+        // never make a click act on the wrong clip.
+        paintContents();
+    });
+    var list = cv.querySelector(".cList");
+    list.addEventListener("click", function (e) {
+        var hit = contentsRowAt(e.target);
+        if (!hit) return;
+        // The two hover buttons act instead of the row, not as well as it.
+        if (e.target.closest && e.target.closest(".cIns")) { e.stopPropagation(); insertToTimeline(hit); return; }
+        if (e.target.closest && e.target.closest(".cPlay")) { e.stopPropagation(); contentsDblClick(hit); return; }
+        contentsClick(hit);
+    });
+    list.addEventListener("dblclick", function (e) {
+        var hit = contentsRowAt(e.target);
+        if (hit) contentsDblClick(hit);
+    });
 }
 
 function paletteHTML() {
     var h = "";
     for (var i = 0; i < PALETTE.length; i++) {
-        h += '<button class="sw" data-color="' + PALETTE[i].hex + '" title="' + esc(PALETTE[i].name) +
+        // data-name feeds the instant hover label. The title stays too — it costs
+        // nothing and is what shows if someone hovers and waits.
+        h += '<button class="sw" data-color="' + PALETTE[i].hex +
+            '" data-name="' + esc(PALETTE[i].name) + '" title="' + esc(PALETTE[i].name) +
             '" style="background:' + PALETTE[i].hex + '"></button>';
     }
     // 16 swatches fill two rows of eight exactly, so the clear can't share the
     // grid without leaving an orphan circle. It gets its own slim labelled strip.
-    h += '<button class="sw clear" data-color="" title="Clear colour">' + ICON_XSMALL + '<span>Clear colour</span></button>';
+    h += '<button class="sw clear" data-color="" data-name="Clear colour" title="Clear colour">' + ICON_XSMALL + '<span>Clear colour</span></button>';
     return h;
 }
 // No ⋮ button any more — right-clicking the tile or row opens this. The wrapper
@@ -513,6 +1055,9 @@ function wireMenu(scope, node, onColor, onAct, actsFn) {
         menu.classList.toggle("open", open);
         var host = menuHostOf(menu);
         if (host) host.classList.toggle("menuHost", open);
+        // so a menu closed while a swatch was hovered doesn't reopen showing a
+        // colour name where the bin name belongs
+        if (!open) menu.dispatchEvent(new Event("aipMenuClosed"));
     }
     var closeBtn = menu.querySelector(".swClose");
     if (closeBtn) closeBtn.addEventListener("click", function (e) { e.stopPropagation(); openMenu(false); });
@@ -538,10 +1083,43 @@ function wireMenu(scope, node, onColor, onAct, actsFn) {
         }
         openMenu(true);
     });
+    /*
+     * Name the colour you're hovering, instantly.
+     *
+     * Every swatch already carried title="Rose", but CEF's native tooltip takes
+     * about a second to appear and you cross a 20px circle faster than that, so
+     * in practice the names were invisible. The header line borrows itself for
+     * the job — no extra height, and that menu has twice been asked to get
+     * shorter, not taller.
+     *
+     * The name is NOT painted in the swatch colour. Violet on the #26262b menu
+     * measures about 3:1, and this session already shipped one contrast fix for
+     * exactly that mistake. A dot carries the colour; the text stays readable.
+     */
+    var head = menu.querySelector(".mhName");
+    var headText = head ? head.textContent : "";
+    function nameColour(sw) {
+        if (!head) return;
+        var col = sw.getAttribute("data-color") || "";
+        var nm = sw.getAttribute("data-name") || "";
+        head.innerHTML = (col ? '<span class="mhDot" style="background:' + esc(col) + '"></span>' : "") + esc(nm);
+    }
+    function restoreHead() { if (head) head.textContent = headText; }
+
     var sws = menu.querySelectorAll(".tilePalette .sw");
     for (var s = 0; s < sws.length; s++) {
-        (function (sw) { sw.addEventListener("click", function (e) { e.stopPropagation(); onColor(node, sw.getAttribute("data-color") || ""); }); })(sws[s]);
+        (function (sw) {
+            sw.addEventListener("click", function (e) { e.stopPropagation(); onColor(node, sw.getAttribute("data-color") || ""); });
+            sw.addEventListener("mouseenter", function () { nameColour(sw); });
+            sw.addEventListener("mouseleave", restoreHead);
+        })(sws[s]);
     }
+    // Leaving the palette entirely must also restore it — mouseleave on a swatch
+    // doesn't fire if the pointer exits fast enough to skip the event.
+    var pal = menu.querySelector(".tilePalette");
+    if (pal) pal.addEventListener("mouseleave", restoreHead);
+    // and closing the menu mid-hover must not leave the bin name replaced
+    menu.addEventListener("aipMenuClosed", restoreHead);
     function bindActs() {
         var acts = menu.querySelectorAll(".swAct");
         for (var a = 0; a < acts.length; a++) {
@@ -768,6 +1346,9 @@ function rowActionsFor(node) {
     var many = (selection.length > 1 && isSelected(node)) ? selection.length : 0;
     var acts = [];
     if (!many) {
+        // Full width, at the top: it is the primary action now, and keeping it out
+        // of the half-width run leaves the rest of the grid's parity as it was.
+        acts.push({ act: "reveal", label: "Show in project", icon: ICON_STACK, wide: true });
         // short labels: at half width "Change folder…" would only ellipsis
         acts.push({ act: "link", label: hasFolder ? "Change…" : "Link…", icon: ICON_LINK });
         if (hasFolder) acts.push({ act: "unlink", label: "Unlink", icon: ICON_XSMALL });
@@ -858,9 +1439,17 @@ function renderPinned() {
         (function (node) {
             var tile = document.createElement("div");
             tile.className = "pinTile";
-            tile.title = node.folder ? (node.folder + " — click to open") : "Click to link a folder";
+            // The modifier is invisible unless it is written down somewhere.
+            tile.setAttribute("data-tip",
+                "<b>" + esc(node.name) + "</b>" +
+                (tileClickMode() === "contents"
+                    ? "Click to see what’s inside, without hunting for it in the Project panel."
+                    : "Click to select it in Premiere and open it on its first clip.") +
+                "<i>" + modKeyName() + "-click " +
+                (node.folder ? "opens " + esc(folderLeaf(node.folder)) + " in Finder"
+                             : "to link a folder to it") + "</i>");
 
-            var sub = node.folder ? folderLeaf(node.folder) : "tap to link";
+            var sub = node.folder ? folderLeaf(node.folder) : "no folder";
             tile.innerHTML =
                 menuHTML([{ act: "unpin", label: "Unpin", icon: ICON_PIN }], node.name, true) +
                 '<div class="pinTop"><span class="pinIco">' + ICON_FOLDER_FILLED + '</span>' +
@@ -876,9 +1465,19 @@ function renderPinned() {
 
             tile.__node = node;                 // FLIP matches old/new positions by node
             wireMenu(tile, node, setColor, handleAct);
-            tile.addEventListener("click", function () {
+            tile.addEventListener("click", function (e) {
                 if (tileDragMoved) { tileDragMoved = false; return; }   // that was a drag
-                if (node.folder) openInFinder(node.folder); else linkFolder(node);
+                // Plain click jumps to the bin in Premiere — the reason to pin a bin
+                // is to get to it fast. The folder is still one modifier away.
+                // Cmd is the Mac key and Alt the Windows one; accept either on both,
+                // since guessing wrong just means nothing happens and the user has
+                // no way to find out which one this build wanted.
+                if (e && (e.metaKey || e.altKey)) {
+                    if (node.folder) openInFinder(node.folder); else linkFolder(node);
+                    return;
+                }
+                if (tileClickMode() === "contents") { openContents(binPathOf(node) || [node.name], null, true); return; }
+                revealBin(node);
             });
             tile.addEventListener("mousedown", function (e) {
                 if (e.button !== 0) return;
@@ -937,11 +1536,78 @@ function computeDupNodes() {
 // Visible rows in draw order. Each entry carries `chain` — the links from
 // root down to itself, indexed by depth — which is what lets a gap resolve
 // "insert at depth 1" into a concrete array and index.
+/* ---- bin structure order ----
+ *
+ * Display only. Every row still carries the REAL array and the REAL index it
+ * occupies in treeData, because drag-and-drop moves bins by position — hand it
+ * a position from a sorted copy and it would drop things in the wrong place.
+ * So the order changes, the addressing does not.
+ *
+ * Dragging is disabled while a sort is active: "insert between these two rows"
+ * has no meaning when the rows are not in stored order.
+ */
+var TREE_SORT_KEY = "aip_treeSort";
+var TREE_SORT_MODES = ["manual", "name", "color", "linked"];
+var TREE_SORT_LABELS = {
+    manual: "Manual order", name: "Name A–Z", color: "Colour", linked: "Linked first"
+};
+function treeSort() {
+    var v = localStorage.getItem(TREE_SORT_KEY);
+    return TREE_SORT_MODES.indexOf(v) >= 0 ? v : "manual";
+}
+function setTreeSort(mode) {
+    localStorage.setItem(TREE_SORT_KEY, TREE_SORT_MODES.indexOf(mode) >= 0 ? mode : "manual");
+    syncTreeSortControl();
+    renderTree();
+}
+/* Pairs of {node, idx} in display order. idx is always the position in `arr`. */
+function orderedChildren(arr, mode) {
+    var dec = [], i;
+    for (i = 0; i < arr.length; i++) dec.push({ node: arr[i], idx: i });
+    if (dec.length < 2) return dec;
+    // Manual is not exempt from reversing: "the stored order, backwards" is a
+    // real thing to want, and a reverse that quietly skipped one mode would be
+    // worse than not offering it. Only the no-op case short-circuits.
+    if (mode === "manual" && sortDir(TREE_DIR_KEY) !== "desc") return dec;
+    var byName = function (a, b) {
+        var x = String(a.node.name).toLowerCase(), y = String(b.node.name).toLowerCase();
+        return x < y ? -1 : (x > y ? 1 : a.idx - b.idx);
+    };
+    var flip = (sortDir(TREE_DIR_KEY) === "desc") ? -1 : 1;
+    dec.sort(function (a, b) { return flip * tcmp(a, b); });
+    function tcmp(a, b) {
+        if (mode === "name") return byName(a, b);
+        if (mode === "linked") {
+            var al = !!a.node.folder, bl = !!b.node.folder;
+            if (al !== bl) return al ? -1 : 1;
+            return a.idx - b.idx;          // stored order inside each group
+        }
+        if (mode === "color") {
+            // Grouped by colour, in palette order so the grouping matches the
+            // swatch row people already know. Uncoloured bins last: they are
+            // the absence of a choice, not a colour that sorts before red.
+            var ai = colorRank(a.node.color), bi = colorRank(b.node.color);
+            if (ai !== bi) return ai - bi;
+            return byName(a, b);
+        }
+        return a.idx - b.idx;
+    }
+    return dec;
+}
+function colorRank(hex) {
+    if (!hex) return 9999;                            // no colour sorts last
+    for (var i = 0; i < PALETTE.length; i++) {
+        if (String(PALETTE[i].hex).toLowerCase() === String(hex).toLowerCase()) return i;
+    }
+    return 9998;                                      // a colour not in the palette
+}
+
 function flattenVisible() {
-    var out = [];
+    var out = [], mode = treeSort();
     (function walk(arr, depth, chain) {
-        for (var i = 0; i < arr.length; i++) {
-            var node = arr[i];
+        var ord = orderedChildren(arr, mode);
+        for (var k = 0; k < ord.length; k++) {
+            var node = ord[k].node, i = ord[k].idx;    // i is the position in arr, not on screen
             var myChain = chain.concat([{ node: node, arr: arr, idx: i }]);
             out.push({ node: node, depth: depth, arr: arr, idx: i, chain: myChain });
             if (node.children && node.children.length && node.open !== false) {
@@ -986,13 +1652,29 @@ function materialize(res) {
 // row that opened it. Live rects are safe here: opening a gap only ever moves
 // rows *below* the cursor, so the zone the cursor sits in can grow but never
 // slide out from under it.
+/* How much of a row's top and bottom counts as "the gap above/below" rather
+ * than the row itself, when a folder is dragged in from Finder.
+ *
+ * This used to be 30% of the row height, capped at 11px. On a 36px row that is
+ * 10.8px at each end, so with the 11px gap element between rows the drop zones
+ * worked out at ~33px of "make a new bin" against ~14px of "link to this bin" —
+ * a folder aimed at a bin landed as a new bin about seventy percent of the
+ * time, which read as "linking is broken".
+ *
+ * Linking a folder to a bin is the common intent; making new bins from a drop
+ * is mostly a first-run thing and the big empty-state drop zone already covers
+ * it. So the row takes the majority and the gap keeps a comfortable 4px each
+ * side, still ~19px of target with the gap element included.
+ */
+function gapBand(h) { return Math.max(3, Math.min(4, h * 0.12)); }
+
 function pointerTarget(x, y) {
     if (!rowEls.length) return gapTarget(0, x);
     for (var i = 0; i < rowEls.length; i++) {
         var r = rowEls[i].getBoundingClientRect();
         if (y < r.top) return gapTarget(i, x);          // in the gap above this row
         if (y <= r.bottom) {
-            var band = Math.max(6, Math.min(11, r.height * 0.3));
+            var band = gapBand(r.height);
             if (y < r.top + band) return gapTarget(i, x);
             if (y > r.bottom - band) return gapTarget(i + 1, x);
             dragAnchor = null;                          // over a row: next gap starts fresh
@@ -1136,18 +1818,19 @@ function makeRow(entry) {
             row.setAttribute("data-depth", depth);
             // a linked bin gets a 2px rail in its own colour (grey if uncoloured)
             if (hasFolder) row.style.setProperty("--rail", node.color || "rgba(255,255,255,0.22)");
-            if (dupNodes.indexOf(node) >= 0) row.title = "Another bin under the same parent has this name — rename one";
+            if (dupNodes.indexOf(node) >= 0) row.setAttribute("data-tip",
+                "<b>Two bins here share this name</b>Bins are found by name, so the panel cannot tell them apart — rename one of them.");
 
             // fold/unfold parents; leaves get a spacer so names stay aligned
             var chev = kids
-                ? '<button class="tchev' + (open ? "" : " closed") + '" title="Fold / unfold">' + ICON_CHEV + '</button>'
+                ? '<button class="tchev' + (open ? "" : " closed") + '" data-tip="Fold or unfold this bin\'s sub-bins.">' + ICON_CHEV + '</button>'
                 : '<span class="tchev spacer"></span>';
             // linked bins name their folder; unlinked ones say so in words —
             // a dashed border had to compete with three other dashed meanings
             // Root bins are usually just containers, so "not linked" on them is noise.
             // Sub-bins are where a missing link actually matters.
             var chip = hasFolder
-                ? '<span class="tchip" title="' + esc(node.folder) + ' — click to open">' + esc(folderLeaf(node.folder)) + '</span>'
+                ? '<span class="tchip" data-tip="Linked to <b>' + esc(node.folder) + '</b>Import pulls new files from here into this bin.<i>Click to open it in Finder.</i>">' + esc(folderLeaf(node.folder)) + '</span>'
                 : (depth > 0 ? '<span class="tnolink">not linked</span>' : '');
             var pinDot = node.pinned ? '<span class="pinDot" title="Pinned"></span>' : '';
             var pinLabel = node.pinned ? "Unpin" : "Pin";
@@ -1158,7 +1841,7 @@ function makeRow(entry) {
             var acts = rowActionsFor(node);
 
             row.innerHTML =
-                '<span class="tgrip" title="Drag to reorder — or up to Pinned to pin it">' + ICON_GRIP + '</span>' +
+                '<span class="tgrip" data-tip="Drag to reorder or re-nest.<i>Drag it up into PINNED to pin it.</i>">' + ICON_GRIP + '</span>' +
                 chev +
                 '<span class="ticon" title="Drag to reorder, or up to Pinned to pin this bin">' + ICON_FOLDER + '</span>' +
                 '<span class="tname"></span>' +
@@ -1387,6 +2070,13 @@ function pinDragMove(e) {
         // A clone mints new node objects, so restoring it would leave the drag
         // holding a reference that is no longer in the tree — which silently
         // broke pinning a bin you'd dragged across the list on the way up.
+        // "Insert between these two rows" means nothing when the rows are not
+        // in stored order, so reordering is off while a sort is applied.
+        if (treeSort() !== "manual") {
+            setStatus("Set the bin order to Manual to rearrange bins.", "");
+            cancelRowDrag();
+            return;
+        }
         var home = findParentIn(treeData, pinDrag.node);
         rowDrag = {
             node: pinDrag.node,
@@ -1559,6 +2249,7 @@ function handleAct(act, node) {
     if (act === "pin") { node.pinned = true; node.pinIdx = nextPinIdx(); saveTree(); renderAll(); }
     else if (act === "unpin") { node.pinned = false; saveTree(); renderAll(); }
     else if (act === "link") { linkFolder(node); }
+    else if (act === "reveal") { revealBin(node); }
     else if (act === "addsub") { addChild(node); }
     else if (act === "unlink") { unlinkBins(group); }
     else if (act === "remove") { removeBins(group); }
@@ -1868,7 +2559,12 @@ function onFileDropToPin(node, filePaths) {
     }
     if (dups.length) {
         showDupDialog(dups.length, function (choice) {
-            if (!choice) { if (fresh.length) performCopy(node, fresh, [], null); else setStatus("Cancelled.", ""); return; }
+            // Cancel cancels the drop, not just the duplicates. This used to go
+            // ahead and copy the non-duplicate files anyway: drop ten, three
+            // clash, press Cancel, and seven land in the folder regardless.
+            // A button labelled Cancel that still does most of the work is
+            // worse than no button.
+            if (!choice) { setStatus("Cancelled — nothing was copied.", ""); return; }
             performCopy(node, fresh, dups, choice);
         });
     } else { performCopy(node, fresh, [], null); }
@@ -2005,10 +2701,153 @@ function nodeFs() { return nodeReq("fs"); }
 function openInFinder(path) {
     var cp = nodeReq("child_process");
     if (!cp) { setStatus("Can’t open the folder — Node unavailable.", "error"); return; }
-    var isWin = /win/i.test(navigator.platform || "");
-    try { if (isWin) cp.execFile("explorer", [path]); else cp.execFile("open", [path]); }
+    try { if (isWindows()) cp.execFile("explorer", [path]); else cp.execFile("open", [path]); }
     catch (e) { setStatus("Couldn’t open the folder.", "error"); }
 }
+/* ====================== hover explanations ======================
+ *
+ * One tooltip element, driven by data-tip on whatever is hovered. Native
+ * title= was doing this job badly: about a second of delay, a pale system box
+ * that looks nothing like Premiere, and no way to give the modifier hint its
+ * own line.
+ *
+ * data-tip, not title, so the two never both appear. Icon-only buttons keep an
+ * aria-label for anyone not using a mouse.
+ */
+var tipEl = null, tipTimer = null, tipFor = null;
+var TIP_DELAY = 380;          // long enough not to flash while crossing the panel
+
+function tipNode() {
+    if (!tipEl) {
+        tipEl = document.createElement("div");
+        tipEl.className = "tip";
+        document.body.appendChild(tipEl);
+    }
+    return tipEl;
+}
+function hideTip() {
+    if (tipTimer) { clearTimeout(tipTimer); tipTimer = null; }
+    tipFor = null;
+    if (tipEl) { tipEl.classList.remove("on"); tipEl.style.left = "-9999px"; }
+}
+function placeTip(el) {
+    var t = tipNode(), r = el.getBoundingClientRect();
+    t.style.left = "0px"; t.style.top = "0px";        // measure unclamped
+    var w = t.offsetWidth, h = t.offsetHeight;
+    var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+
+    var left = r.left + r.width / 2 - w / 2;
+    // The panel can be 300px wide, so a centred tooltip runs off the edge more
+    // often than not. Clamp rather than let it clip.
+    if (left < 6) left = 6;
+    if (left + w > vw - 6) left = Math.max(6, vw - 6 - w);
+
+    var top = r.bottom + 7;
+    if (top + h > vh - 6) top = r.top - h - 7;        // no room below: go above
+    if (top < 6) top = 6;
+
+    t.style.left = Math.round(left) + "px";
+    t.style.top = Math.round(top) + "px";
+    t.classList.add("on");
+}
+function showTipFor(el) {
+    var txt = el.getAttribute("data-tip");
+    if (!txt) return;
+    tipFor = el;
+    tipNode().innerHTML = txt;                        // data-tip is ours, never user input
+    placeTip(el);
+}
+function wireTips() {
+    document.addEventListener("mouseover", function (e) {
+        var el = e.target && e.target.closest ? e.target.closest("[data-tip]") : null;
+        if (!el || el === tipFor) return;
+        hideTip();
+        tipTimer = setTimeout(function () { showTipFor(el); }, TIP_DELAY);
+    });
+    document.addEventListener("mouseout", function (e) {
+        var el = e.target && e.target.closest ? e.target.closest("[data-tip]") : null;
+        if (!el) return;
+        // Moving onto a child of the same control is not leaving it.
+        if (e.relatedTarget && el.contains(e.relatedTarget)) return;
+        hideTip();
+    });
+    // Anything that moves the layout under the cursor invalidates the position.
+    document.addEventListener("mousedown", hideTip, true);
+    document.addEventListener("scroll", hideTip, true);
+    window.addEventListener("blur", hideTip);
+}
+
+function isWindows() { return /win/i.test(navigator.platform || ""); }
+function modKeyName() { return isWindows() ? "Alt" : "⌘"; }
+
+/*
+ * Jump to a bin in Premiere's Project panel.
+ *
+ * Every outcome gets a status line, including success. Selecting a bin is a
+ * quiet thing to happen in another window — without confirmation here, a click
+ * that worked and a click that silently did nothing look identical, and there
+ * would be no way to tell which one you got.
+ */
+function revealBin(node) {
+    var np = binPathOf(node);
+    if (!np) { setStatus("Couldn’t work out where “" + node.name + "” sits.", "error"); return; }
+    revealBinPath(np, node.name);
+}
+/* Same thing, addressed by path. A sub-bin reached by drilling into the
+ * contents view has no node in the panel's own tree, so it can only be named
+ * this way. */
+function revealBinPath(np, label) {
+    var node = { name: label };
+    cs.evalScript("aip_revealBin(" + q(np.join("\t")) + ")", function (res) {
+        res = String(res == null ? "" : res);
+        /* "|noout" means the host could not force the Project panel back to the
+         * top level first, because the project has no loose file at its root to
+         * do it with. Everything still got selected — but if the panel happened
+         * to be opened inside a different bin, it will not have moved, and the
+         * only honest thing is to say so instead of claiming success. */
+        var stuck = res.indexOf("|noout") >= 0;
+        var advice = stuck ? " If the Project panel didn’t move, press its back arrow first." : "";
+        if (res.indexOf("OKVIEW:") === 0) {
+            /* The good path: the selection was applied to each project VIEW by
+             * ID. A bin opened by double-click is its own tab, and a tab is a
+             * separate view — which is why plain select() looked like it did
+             * nothing. The view count is worth showing: if it says 1 while two
+             * tabs are open, the API is not seeing them all. */
+            var parts = res.substring(7).split(":");
+            var tally = String(parts.shift());          // "<applied>/<confirmed>"
+            var clip = parts.join(":");
+            var half = tally.split("/");
+            var applied = half[0], confirmed = half[1];
+            /* Confirmed means Premiere reports the item as selected afterwards.
+             * If it is confirmed and the panel still did not move, the panel
+             * cannot be driven by script — which is a real answer, not a bug to
+             * keep chasing. Saying so beats another round of guessing. */
+            var note = (confirmed === applied)
+                ? " — selection confirmed in " + applied + (applied === "1" ? " view" : " views")
+                : " — only " + confirmed + " of " + applied + " views took it";
+            setStatus("Opened “" + node.name + "”" + (clip ? ": " + clip : "") + note + "." + binTabNote(),
+                confirmed === applied ? "ok" : "");
+        } else if (res.indexOf("OKIN") === 0) {
+            // Landed inside: Premiere had to open the bin to reveal the clip.
+            setStatus("Opened “" + node.name + "” — " + res.substring(res.indexOf(":") + 1) + "." + advice + binTabNote(),
+                stuck ? "" : "ok");
+        } else if (res === "OK" || res === "OK|noout") {
+            // Only the bin got selected, so the panel will have highlighted it
+            // without necessarily moving. Say which happened rather than let a
+            // half-result read as a full one.
+            setStatus("Highlighted “" + node.name + "” — no files in it to open it with." + advice, "");
+        } else if (res === "NOBIN") {
+            // The panel's tree and the real project have drifted apart — usually
+            // the bin was renamed or deleted in Premiere, or never created here.
+            setStatus("“" + node.name + "” isn’t in this project yet — Import or Create structure will add it.", "error");
+        } else if (res === "NOSUPPORT") {
+            setStatus("This Premiere build can’t jump to a bin. " + modKeyName() + "-click opens the folder instead.", "error");
+        } else {
+            setStatus("Couldn’t show “" + node.name + "”.", "error");
+        }
+    });
+}
+
 function isDirPath(path) {
     var fs = nodeFs();
     if (fs) { try { return fs.statSync(path).isDirectory(); } catch (e) { return false; } }
@@ -2750,6 +3589,39 @@ function applyUpdate() {
             return;
         }
 
+        /* Keep what was just replaced, rather than deleting it.
+         *
+         * The rollback above only covers an update that FAILS. An update that
+         * succeeds and is simply worse than what it replaced had no way back at
+         * all — and that is the likelier problem. Promoting the backup into the
+         * same folder the Revert script reads means one revert path covers both
+         * the installer and the in-panel updater. */
+        try {
+            var home = (typeof process !== "undefined" && process.env &&
+                        (process.env.HOME || process.env.USERPROFILE)) || "";
+            if (home) {
+                var root = /^win/i.test(navigator.platform || "")
+                    ? home + "/AppData/Roaming/Omni Link Backups"
+                    : home + "/Library/Application Support/Omni Link Backups";
+                var stamp = new Date().toISOString().replace(/[:T]/g, "-").replace(/\..+$/, "");
+                var snap = root + "/" + stamp, bump = 2;
+                while (fs.existsSync(snap)) { snap = root + "/" + stamp + "-" + bump; bump++; }
+                for (var s = 0; s < saved.length; s++) {
+                    var to = snap + "/" + saved[s];
+                    mkdirp(parentOf(to));
+                    fs.writeFileSync(to, fs.readFileSync(backup + "/" + saved[s]));
+                }
+                fs.writeFileSync(snap + "/SNAPSHOT.txt",
+                    "Omni Link snapshot\ntaken: " + new Date().toString() +
+                    "\nversion: " + VERSION + "\nkind: partial (in-panel update)\n");
+                // Five is plenty, and each holds only the files an update touches.
+                try {
+                    var all = fs.readdirSync(root).sort();
+                    while (all.length > 5) rmrf(root + "/" + all.shift());
+                } catch (eTrim) {}
+            }
+        } catch (eSnap) { /* a missing safety net must never fail the update itself */ }
+
         rmrf(backup);
         showUpdateBar("ok", "Updated to <b>" + esc(updateInfo.version) + "</b> — restart Premiere", "", null);
     }
@@ -2785,6 +3657,17 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("giReset").onclick = function () { closeGear(); resetStructure(); };
     document.getElementById("giRead").onclick = function () { closeGear(); readProjectBins(); };
     document.getElementById("giUpdate").onclick = function () { closeGear(); checkForUpdate(true); };
+    // The escape hatch for the new tile-click behaviour: anyone who preferred
+    // the old one gets it back here, with no reinstall and no restart.
+    document.getElementById("giTileMode").onclick = function () {
+        closeGear();
+        var next = tileClickMode() === "contents" ? "reveal" : "contents";
+        setTileClickMode(next);
+        setStatus(next === "contents"
+            ? "Clicking a pinned bin now shows what’s inside it."
+            : "Clicking a pinned bin now just highlights it in Premiere.", "ok");
+    };
+    syncTileModeLabel();
 
     // builder view
     document.getElementById("builderBack").onclick = function () { showView("main"); };
@@ -2829,6 +3712,12 @@ document.addEventListener("DOMContentLoaded", function () {
     document.addEventListener("drop", function (e) { e.preventDefault(); });
     wireTreeDrops();
     wireBigDrops();
+    wireContents();
+    wireTips();
+    wireRev(document.querySelector(".tRev"), TREE_DIR_KEY, renderTree);
+    wireSortControl(document.querySelector(".tSortWrap"), setTreeSort);
+    syncTreeSortControl();
+    loadBinOpenPref();
 
     watchPanelWidth();
 

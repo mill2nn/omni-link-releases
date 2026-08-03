@@ -181,6 +181,275 @@ function aip_findBinPath(segs) {
 }
 
 /*
+ * Select a bin in Premiere's Project panel, so clicking a pinned tile jumps
+ * there instead of making anyone navigate by hand.
+ *
+ * ProjectItem.select() is the only reveal-shaped call the API offers, and what
+ * it actually does is not guaranteed: on some builds it highlights the item AND
+ * scrolls the panel to it, on others it only sets the selection while the panel
+ * stays put. There is no API at all for expanding a collapsed bin, so a bin
+ * nested inside a closed parent may end up selected but still out of sight.
+ * Selecting each ancestor on the way down costs nothing and improves the odds;
+ * the target goes last so it is the one left selected.
+ *
+ * Returns "OK", "NOBIN" (the panel and the project disagree about what exists),
+ * "NOSUPPORT" (this Premiere has no select()), or "ERR:...".
+ */
+/*
+ * Force Premiere's Project panel back to the top level.
+ *
+ * When a bin is opened, the panel is SCOPED to it — it shows that bin and
+ * nothing else. Selecting an item outside that scope does select the item, but
+ * the panel has no reason to move, so from the outside it looks like nothing
+ * happened. Navigating out is not in the API either.
+ *
+ * The way out is the same trick as the way in: reveal something that can only
+ * be shown from the top level, and the panel has to go there. A loose FILE at
+ * the project root is that something — a bin is not, because selecting a bin
+ * only highlights it.
+ *
+ * Returns "file" (climbed out), "root" (fell back to selecting the root, which
+ * may or may not move anything), or "" (nothing here can do it).
+ */
+/*
+ * Every Project VIEW belonging to the current project.
+ *
+ * This is the piece that was missing. A bin opened by double-click becomes its
+ * own tab, and a tab is a separate project view. ProjectItem.select() does not
+ * say which view it means, so a selection made while a second tab is in front
+ * lands somewhere the user cannot see — which is exactly the "nothing happens"
+ * Bom kept reporting. app.setProjectViewSelection takes a view ID, so the
+ * selection can be applied to every view including the one actually in front.
+ *
+ * Returns an array of view IDs, empty if this Premiere has no such API.
+ */
+function aip_projectViews() {
+    var ids = [];
+    try {
+        if (typeof app.getProjectViewIDs !== "function") return ids;
+        var all = app.getProjectViewIDs();
+        if (!all) return ids;
+        for (var i = 0; i < all.length; i++) {
+            var id = all[i];
+            // Other open projects have views too; setting selection in those
+            // would reach into a project the user is not working in.
+            try {
+                var proj = app.getProjectFromViewID(id);
+                if (proj && String(proj.name) !== String(app.project.name)) continue;
+            } catch (e1) {}
+            ids.push(id);
+        }
+    } catch (e) { return []; }
+    return ids;
+}
+
+/* Select one item in every view of this project, then READ THE SELECTION BACK.
+ *
+ * Setting a selection and seeing nothing move has two very different causes:
+ * the call was ignored, or the call worked and Premiere simply does not scroll
+ * its Project panel for a scripted selection. Those need opposite responses, so
+ * guessing between them is worthless. Reading it back separates them.
+ *
+ * Returns "<applied>/<confirmed>" — how many views accepted the call, and how
+ * many actually report the item as selected afterwards.
+ */
+function aip_selectInViews(item, ids) {
+    var applied = 0, confirmed = 0;
+    if (typeof app.setProjectViewSelection !== "function") return "0/0";
+    var wantId = "";
+    try { wantId = String(item.nodeId); } catch (e0) { wantId = ""; }
+
+    for (var i = 0; i < ids.length; i++) {
+        try { app.setProjectViewSelection([item], ids[i]); applied++; } catch (e1) { continue; }
+        try {
+            if (typeof app.getProjectViewSelection !== "function") continue;
+            var sel = app.getProjectViewSelection(ids[i]);
+            if (!sel) continue;
+            for (var j = 0; j < sel.length; j++) {
+                var got = "";
+                try { got = String(sel[j].nodeId); } catch (e2) { got = ""; }
+                if (got !== "" && got === wantId) { confirmed++; break; }
+            }
+        } catch (e3) {}
+    }
+    return applied + "/" + confirmed;
+}
+
+function aip_climbOut() {
+    var root = app.project.rootItem, kids;
+    try { kids = root.children; } catch (e) { return ""; }
+    if (kids) {
+        for (var i = 0; i < kids.numItems; i++) {
+            var it;
+            try { it = kids[i]; } catch (e1) { continue; }
+            if (!it || it.type == 2) continue;              // needs to be a file
+            try {
+                if (typeof it.select !== "function") break;
+                it.select();
+                return "file";
+            } catch (e2) { break; }
+        }
+    }
+    try {
+        if (typeof root.select === "function") { root.select(); return "root"; }
+    } catch (e3) {}
+    return "";
+}
+
+/*
+ * Ask this Premiere what it actually exposes.
+ *
+ * Three fixes for "jump to a bin" have now done nothing, each built on the
+ * assumption that select() causes the Project panel to navigate. That
+ * assumption came from Adobe's docs and forum, not from this machine. This
+ * reports what is really here so the next attempt is based on fact.
+ *
+ * READ ONLY. It lists names via ExtendScript's reflect and reads a handful of
+ * documented properties. It never calls a method it discovered — invoking an
+ * unknown QE function against a live project is exactly how you lose someone's
+ * afternoon. app.enableQE() itself is the one call made, and it is the standard
+ * way in; if that is unwelcome the QE section simply reports as unavailable.
+ */
+function aip_probeQE() {
+    var out = [];
+    function say(s) { out.push(String(s)); }
+    function names(obj, what) {
+        var list = [];
+        try {
+            var r = obj.reflect;
+            var arr = (what === "methods") ? r.methods : r.properties;
+            for (var i = 0; i < arr.length; i++) list.push(String(arr[i].name));
+        } catch (e) { return "(reflect unavailable: " + e.toString() + ")"; }
+        list.sort();
+        return list.join(", ");
+    }
+
+    say("=== Omni Link — bin navigation probe ===");
+    try { say("Premiere version: " + app.version); } catch (e1) { say("version: ?"); }
+    try { say("project: " + app.project.name); } catch (e2) { say("project: none open"); }
+
+    say("");
+    say("--- app methods ---");
+    say(names(app, "methods"));
+    say("");
+    say("--- app.project methods ---");
+    try { say(names(app.project, "methods")); } catch (e3) { say("(none)"); }
+
+    // A real bin, so the reflection is of the thing we actually need to move to.
+    var bin = null, clip = null;
+    try {
+        var kids = app.project.rootItem.children;
+        for (var i = 0; i < kids.numItems; i++) {
+            var it = kids[i];
+            if (!it) continue;
+            if (bin === null && it.type == 2) bin = it;
+            if (clip === null && it.type != 2) clip = it;
+        }
+    } catch (e4) {}
+
+    say("");
+    say("--- a bin ProjectItem ---");
+    if (bin === null) {
+        say("(no top-level bin in this project to inspect)");
+    } else {
+        say("name: " + bin.name);
+        say("methods: " + names(bin, "methods"));
+        say("properties: " + names(bin, "properties"));
+    }
+    say("");
+    say("--- loose files at the project root ---");
+    say(clip === null
+        ? "NONE — nothing at root to climb out with (this alone breaks the current fix)"
+        : "yes, e.g. " + clip.name);
+
+    say("");
+    say("--- QE (undocumented) ---");
+    var qeOK = false;
+    try {
+        if (typeof app.enableQE === "function") { app.enableQE(); qeOK = true; }
+        else say("app.enableQE is not a function");
+    } catch (e5) { say("enableQE threw: " + e5.toString()); }
+    if (qeOK) {
+        try {
+            say("qe methods: " + names(qe, "methods"));
+            say("qe properties: " + names(qe, "properties"));
+        } catch (e6) { say("qe object unreachable: " + e6.toString()); }
+        try {
+            say("qe.project methods: " + names(qe.project, "methods"));
+        } catch (e7) { say("qe.project unreachable: " + e7.toString()); }
+    }
+
+    say("");
+    say("=== end ===");
+    return out.join("\n");
+}
+
+function aip_revealBin(binPath) {
+    var segs = String(binPath).split("\t");
+    var bin = aip_findBinPath(segs);
+    if (bin === null) return "NOBIN";
+    if (bin == app.project.rootItem) return "NOBIN";       // empty path — nothing to show
+
+    /* What to land on. Selecting the BIN only ever highlighted it; selecting
+     * something INSIDE it is what makes a panel open the bin to show it. A bin
+     * holding nothing but sub-bins has no such anchor, and falls back to itself. */
+    var target = bin, landed = "";
+    var kids = null;
+    try { kids = bin.children; } catch (e0) { kids = null; }
+    if (kids) {
+        for (var k = 0; k < kids.numItems; k++) {
+            var it;
+            try { it = kids[k]; } catch (e1) { continue; }
+            if (!it || it.type == 2) continue;             // 2 = bin, not a file
+            target = it;
+            landed = aip_trim(String(it.name)).replace(/[\t\r\n\u0001]/g, " ");
+            break;
+        }
+    }
+
+    /* Preferred path: address every project VIEW explicitly.
+     *
+     * ProjectItem.select() does not say which view it means. With a bin opened
+     * in its own tab — Premiere's default for double-click — the selection can
+     * land in a view that is not in front, which looks exactly like nothing
+     * happening. setProjectViewSelection takes a view ID, so every tab of this
+     * project gets it, including whichever one the user is looking at. */
+    var ids = aip_projectViews();
+    var tally = "0/0";
+    if (ids.length) {
+        // Select the bin first: on a bin, select() is also what sets the import
+        // target, and that is worth keeping.
+        try { if (typeof bin.select === "function") bin.select(); } catch (e2) {}
+        tally = aip_selectInViews(target, ids);
+    }
+    if (tally !== "0/0") return "OKVIEW:" + tally + ":" + landed;
+
+    /* Fallback for a Premiere without the view API: the old behaviour. */
+    var can = false;
+    try { can = (typeof bin.select === "function"); } catch (e3) { can = false; }
+    if (!can) return "NOSUPPORT";
+    var climbed = aip_climbOut();
+    var stuck = (climbed === "file") ? "" : "|noout";
+    try {
+        for (var i = 1; i < segs.length; i++) {
+            var part = [];
+            for (var j = 0; j < i; j++) part.push(segs[j]);
+            var anc = aip_findBinPath(part);
+            if (anc === null || anc == app.project.rootItem) continue;
+            try { anc.select(); } catch (e4) {}
+        }
+        bin.select();
+        if (target !== bin && typeof target.select === "function") {
+            target.select();
+            return "OKIN" + stuck + ":" + landed;
+        }
+    } catch (e5) {
+        return "ERR:" + e5.toString();
+    }
+    return "OK" + stuck;
+}
+
+/*
  * Rename an existing bin so a rename in the panel is mirrored in the project.
  * Without this, renaming here and then importing builds a NEW bin at the new
  * path and leaves the old one behind with all its clips still inside.
@@ -374,6 +643,168 @@ function aip_scanProject() {
 
 // Kept so an older installed panel talking to a newer host still works.
 function aip_readProject() { return aip_scanProject(); }
+
+/*
+ * List what is directly inside one bin, so the panel can show a bin's contents
+ * without anyone scrolling Premiere's Project panel. Adobe exposes no way to
+ * open or scroll to a bin (select() only highlights it), so the contents come
+ * here instead of the user going there.
+ *
+ * One record per line. Fields, separated by U+0001:
+ *   0  kind    "B" for a sub-bin, "C" for a clip
+ *   1  index   position in this bin's children — how the panel names an item
+ *              later, since two clips may share a name but not an index
+ *   2  name
+ *   3  meta    sub-bins: how many items inside. Clips: the file extension.
+ *   4  offline "1" when the media is missing, "" otherwise
+ *
+ * Index is the identifier on purpose: it survives duplicate names, and it stays
+ * valid as long as the bin is not reordered between listing and clicking. If it
+ * is, aip_childOf checks the name it was given still matches before acting.
+ */
+var AIP_MAX_ITEMS = 800;
+
+function aip_extOf(name) {
+    var s = String(name), dot = s.lastIndexOf(".");
+    if (dot <= 0 || dot === s.length - 1) return "";
+    var ext = s.substring(dot + 1);
+    if (ext.length > 5 || /[^A-Za-z0-9]/.test(ext)) return "";
+    return ext.toUpperCase();
+}
+
+function aip_isOffline(item) {
+    // isOffline() is the direct answer but is not on every build, so fall back
+    // to asking the file system. A clip with no path at all (titles, colour
+    // mattes, sequences) is not offline — it has no media to lose.
+    try { if (typeof item.isOffline === "function") return item.isOffline() ? "1" : ""; } catch (e) {}
+    var mp = "";
+    try { if (typeof item.getMediaPath === "function") mp = String(item.getMediaPath()); } catch (e2) { mp = ""; }
+    if (mp === "") return "";
+    try { return (new File(mp)).exists ? "" : "1"; } catch (e3) { return ""; }
+}
+
+function aip_binContents(binPath) {
+    if (!app.project) return "ERR:No project open";
+    var segs = String(binPath).split("\t");
+    var bin = aip_findBinPath(segs);
+    if (bin === null) return "NOBIN";
+    var kids;
+    try { kids = bin.children; } catch (e) { return "ERR:" + e.toString(); }
+    if (!kids) return "OK:";
+
+    var out = [], hit = false;
+    for (var i = 0; i < kids.numItems; i++) {
+        if (out.length >= AIP_MAX_ITEMS) { hit = true; break; }
+        var item;
+        try { item = kids[i]; } catch (e2) { continue; }
+        if (!item) continue;
+        var name = aip_trim(String(item.name));
+        if (name === "") continue;
+        name = name.replace(/[\t\r\n\u0001]/g, " ");        // never break the record format
+        var kind = (item.type == 2) ? "B" : "C";
+        var meta = "";
+        if (kind === "B") {
+            try { meta = String(item.children ? item.children.numItems : 0); } catch (e3) { meta = "0"; }
+        } else {
+            meta = aip_extOf(name);
+        }
+        var off = (kind === "B") ? "" : aip_isOffline(item);
+        out.push(kind + AIP_FIELD_SEP + i + AIP_FIELD_SEP + name + AIP_FIELD_SEP + meta + AIP_FIELD_SEP + off);
+    }
+    if (out.length === 0) return "OK:";
+    return (hit ? "TRUNC:" : "OK:") + out.join("\n");
+}
+
+/*
+ * Resolve one child of a bin by index, refusing if the name no longer matches.
+ * The panel lists a bin once and then acts on it later; if the project changed
+ * underneath, acting on whatever now sits at that index would select the wrong
+ * clip silently. Better to fail and let the panel re-list.
+ */
+function aip_childOf(binPath, index, expectName) {
+    var bin = aip_findBinPath(String(binPath).split("\t"));
+    if (bin === null) return null;
+    var kids;
+    try { kids = bin.children; } catch (e) { return null; }
+    if (!kids) return null;
+    var i = parseInt(index, 10);
+    if (isNaN(i) || i < 0 || i >= kids.numItems) return null;
+    var item;
+    try { item = kids[i]; } catch (e2) { return null; }
+    if (!item) return null;
+    var have = aip_trim(String(item.name)).replace(/[\t\r\n\u0001]/g, " ");
+    if (have != String(expectName)) return null;
+    return item;
+}
+
+/*
+ * Put a clip into the open sequence at the playhead.
+ *
+ * This is the point of the contents list: Premiere's Project panel cannot be
+ * navigated from here (see aip_revealBin), so the way to make that not matter
+ * is to remove the reason to go there. Sequence editing IS scriptable, so the
+ * clip can go straight from the list into the timeline.
+ *
+ * insertClip, not overwriteClip: insert ripples what is already on the track
+ * along, overwrite destroys whatever sits under the playhead. Nothing here
+ * should be able to silently delete part of an edit.
+ *
+ * Returns "OK:<track>", or STALE / ISBIN / NOSEQ / NOTRACK / ERR:...
+ */
+function aip_insertToTimeline(binPath, index, expectName, isAudio) {
+    var item = aip_childOf(binPath, index, expectName);
+    if (item === null) return "STALE";
+    if (item.type == 2) return "ISBIN";
+
+    var seq = null;
+    try { seq = app.project.activeSequence; } catch (e) { seq = null; }
+    if (!seq) return "NOSEQ";
+
+    var at = null;
+    try { at = seq.getPlayerPosition(); } catch (e1) { at = null; }
+    if (at === null) return "ERR:could not read the playhead";
+
+    var wantAudio = (String(isAudio) === "1");
+    var tracks = null, label = "";
+    try {
+        tracks = wantAudio ? seq.audioTracks : seq.videoTracks;
+        label = wantAudio ? "A1" : "V1";
+    } catch (e2) { tracks = null; }
+    if (!tracks || tracks.numTracks < 1) return "NOTRACK";
+
+    try {
+        tracks[0].insertClip(item, at);
+    } catch (e3) {
+        return "ERR:" + e3.toString();
+    }
+    return "OK:" + label;
+}
+
+function aip_selectChild(binPath, index, expectName) {
+    var item = aip_childOf(binPath, index, expectName);
+    if (item === null) return "STALE";
+    try {
+        if (typeof item.select !== "function") return "NOSUPPORT";
+        item.select();
+    } catch (e) { return "ERR:" + e.toString(); }
+    return "OK";
+}
+
+/*
+ * Open a clip in the Source Monitor. This is the one piece of real navigation
+ * Adobe does expose, which is why it is worth having: it previews a clip
+ * without the Project panel being involved at all.
+ */
+function aip_openChildInSource(binPath, index, expectName) {
+    var item = aip_childOf(binPath, index, expectName);
+    if (item === null) return "STALE";
+    if (item.type == 2) return "ISBIN";
+    try {
+        if (!app.sourceMonitor || typeof app.sourceMonitor.openProjectItem !== "function") return "NOSUPPORT";
+        app.sourceMonitor.openProjectItem(item);
+    } catch (e) { return "ERR:" + e.toString(); }
+    return "OK";
+}
 
 // The active project's key: its file path if saved, else its name.
 function aip_projectKey() {

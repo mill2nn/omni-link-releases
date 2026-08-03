@@ -11,12 +11,12 @@
         <!-- ============ MAIN VIEW ============ -->
         <div id="mainView" class="view">
             <div class="header">
-                <button id="importBtn" class="importPill" title="Import all new files into their bins">
+                <button id="importBtn" class="importPill" data-tip="<b>Import new files</b>Goes through every bin that has a folder linked and brings in anything that isn't already there. Files you've imported before are skipped, so pressing it twice never duplicates anything.">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11" /><path d="M8 11l4 4 4-4" /><path d="M5 20h14" /></svg>
                     <span>Import</span>
                 </button>
                 <!-- icon only: at 300px a second labelled pill does not fit -->
-                <button id="setupBtn" class="navBtn setupBtn" title="Set up from this project — build the bin structure and link each bin to the folder its clips came from">
+                <button id="setupBtn" class="navBtn setupBtn" data-tip="<b>Set up from this project</b>Reads the bins already in your Premiere project, rebuilds that structure here, and links each bin to the folder its clips came from. Use it once on a project you built by hand." aria-label="Set up from this project">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M12 15V9" /><path d="M9.5 11.5 12 9l2.5 2.5" /></svg>
                 </button>
                 <div class="htext">
@@ -24,31 +24,35 @@
                     <div id="projName" class="projName">—</div>
                 </div>
                 <div class="gearWrap">
-                    <button id="gearBtn" class="navBtn" title="More">
+                    <button id="gearBtn" class="navBtn" data-tip="<b>More</b>Presets, reloading this project, checking for updates, and resetting the structure." aria-label="More options">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
                     </button>
                     <div id="gearPop" class="gearPop" style="display:none;">
-                        <button class="gearItem" id="giPresets">
+                        <button class="gearItem" id="giPresets" data-tip="Save a bin structure you use again and again, and drop it into a new project in one click.">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
                             Customize presets…
                         </button>
-                        <button class="gearItem" id="giReload">
+                        <button class="gearItem" id="giReload" data-tip="Re-read this project's saved structure from disk. Useful if the panel and the project have drifted apart.">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.7-5.7L20 8M20 4v4h-4" /><path d="M20 12a8 8 0 0 1-13.7 5.7L4 16M4 20v-4h4" /></svg>
                             Reload for this project
                         </button>
-                        <button class="gearItem" id="giAddTop">
+                        <button class="gearItem" id="giAddTop" data-tip="Add an empty bin at the top level. You can also drag a folder onto BIN STRUCTURE to make one that's already linked.">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
                             Add top-level bin
                         </button>
-                        <button class="gearItem" id="giRead">
+                        <button class="gearItem" id="giRead" data-tip="Scan the open Premiere project and rebuild the panel's structure from the bins that are actually in it.">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M8 13h8" /><path d="M12 9v8" /></svg>
                             Read bins from project
                         </button>
-                        <button class="gearItem" id="giUpdate">
+                        <button class="gearItem" id="giTileMode" data-tip="Change what clicking a pinned bin does: show what's inside it here, or just highlight it in Premiere's Project panel.">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10" /><circle cx="19" cy="18" r="2" /></svg>
+                            <span id="giTileModeLabel">Pinned click: highlight instead</span>
+                        </button>
+                        <button class="gearItem" id="giUpdate" data-tip="Ask the releases repo whether there's a newer version. Nothing installs on its own — you get a button.">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 21h16" /></svg>
                             Check for updates
                         </button>
-                        <button class="gearItem danger" id="giReset">
+                        <button class="gearItem danger" id="giReset" data-tip="<b>Deletes this project's structure</b>Every bin, link, colour and pin in the panel. Your Premiere project and your files are untouched.">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.7-5.7L20 8M20 4v4h-4" /><path d="M20 12a8 8 0 0 1-13.7 5.7L4 16M4 20v-4h4" /></svg>
                             Reset structure
                         </button>
@@ -62,7 +66,7 @@
             <div id="updBar" class="updBar" style="display:none;">
                 <span class="updIco"></span>
                 <span class="updText"></span>
-                <button class="updBtn" style="display:none;"></button>
+                <button class="updBtn" style="display:none;" data-tip="Download this version and put it in place, then restart Premiere.<i>The version you have now is kept, so Revert Omni Link can bring it back.</i>"></button>
             </div>
 
             <!-- first-run explainer; main.js removes it unless this machine is new -->
@@ -83,10 +87,30 @@
             </div>
             <div id="pinnedGrid" class="pinnedGrid"></div>
 
+            <!-- Everything below the pinned tiles, as one unit — the contents
+                 view swaps places with it, and the tiles stay put above so you
+                 can jump straight to another bin without going back first. -->
+            <div id="structWrap" class="structWrap">
             <div id="treeHeader" class="folderHeader">
                 <svg class="fhChevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
                 <span class="fhLabel">BIN STRUCTURE</span>
                 <span class="secHint">drop a folder · right-click for options</span>
+                <!-- Same control as the contents list, so one thing to learn. -->
+                <button class="cRev tRev" aria-label="Reverse the order">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M6 13l6 6 6-6"/></svg>
+                </button>
+                <div class="cSortWrap tSortWrap">
+                    <button class="cSort tSort" data-tip="Order the bins.<i>Display only — your saved order is untouched, and reordering by hand needs Manual.</i>">
+                        <span class="cSortNow tSortNow">Manual order</span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+                    </button>
+                    <div class="cSortPop gearPop" style="display:none;">
+                        <button class="gearItem cSortOpt tSortOpt" data-sort="manual"><span class="cTick"></span>Manual order</button>
+                        <button class="gearItem cSortOpt tSortOpt" data-sort="name"><span class="cTick"></span>Name A–Z</button>
+                        <button class="gearItem cSortOpt tSortOpt" data-sort="color"><span class="cTick"></span>Colour</button>
+                        <button class="gearItem cSortOpt tSortOpt" data-sort="linked"><span class="cTick"></span>Linked first</button>
+                    </div>
+                </div>
             </div>
 
             <div id="treeList" class="treeList"></div>
@@ -99,16 +123,55 @@
                 <div class="dzSub">One bin per folder, linked and ready to import</div>
             </div>
 
-            <button id="addBinBtn" class="add">
+            <button id="addBinBtn" class="add" data-tip="Add an empty top-level bin.<i>Or drop a folder here to make a bin that's already linked to it.</i>">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
                 Add bin
             </button>
+            </div><!-- /structWrap -->
+
+            <!-- A bin's contents. Premiere exposes no way to open or scroll to a
+                 bin, so the contents come here rather than the user going there. -->
+            <div id="contentsView" class="contentsView" style="display:none;">
+                <div class="cHead">
+                    <button class="cBack" data-tip="Back" aria-label="Back">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
+                    </button>
+                    <span class="cDot" style="display:none;"></span>
+                    <div class="cTitle">
+                        <div class="cName"></div>
+                        <div class="cPath"></div>
+                    </div>
+                    <button class="navBtn cFolder" data-tip="Open this bin's linked folder in Finder." aria-label="Open the linked folder" style="display:none;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+                    </button>
+                </div>
+                <!-- Not a <select>: the native popup is drawn by the OS and
+                     ignores the panel's styling entirely. This reuses the gear
+                     menu's look so it belongs to the panel. -->
+                <div class="cBar">
+                    <button class="cRev" aria-label="Reverse the order"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M6 13l6 6 6-6"/></svg></button>
+                    <div class="cSortWrap">
+                        <button class="cSort" data-tip="Order this list. Sub-bins always stay on top whichever you pick.">
+                            <span class="cSortNow">Project order</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+                        </button>
+                        <div class="cSortPop gearPop" style="display:none;">
+                            <button class="gearItem cSortOpt" data-sort="order"><span class="cTick"></span>Project order</button>
+                            <button class="gearItem cSortOpt" data-sort="name"><span class="cTick"></span>Name A–Z</button>
+                            <button class="gearItem cSortOpt" data-sort="type"><span class="cTick"></span>File type</button>
+                            <button class="gearItem cSortOpt" data-sort="offline"><span class="cTick"></span>Offline first</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="cList"></div>
+                <div class="cFoot"></div>
+            </div>
         </div>
 
         <!-- ============ PRESET BUILDER VIEW ============ -->
         <div id="builderView" class="view" style="display:none;">
             <div class="header">
-                <button id="builderBack" class="navBtn" title="Back">
+                <button id="builderBack" class="navBtn" data-tip="Back to the main panel." aria-label="Back">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
                 </button>
                 <div class="htext">
@@ -119,7 +182,7 @@
 
             <div class="presetRow">
                 <select id="presetSelect"></select>
-                <button id="presetNewBtn" class="miniBtn" title="New preset">
+                <button id="presetNewBtn" class="miniBtn" data-tip="Start a new preset from an empty structure." aria-label="New preset">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
                     New
                 </button>

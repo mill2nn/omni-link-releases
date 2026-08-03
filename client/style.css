@@ -286,6 +286,11 @@ button { font-family: inherit; cursor: pointer; }
     flex: 1; min-width: 0; font-size: 11px; font-weight: 600; color: var(--text);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* the dot that carries the hovered colour, so the name itself can stay readable */
+.tilePalette .mhDot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    margin-right: 6px; vertical-align: 0;
+}
 .tilePalette .swClose {
     flex: none; width: 18px; height: 18px; padding: 0; border: none; border-radius: 4px;
     background: transparent; color: var(--text-3);
@@ -497,6 +502,120 @@ button { font-family: inherit; cursor: pointer; }
     background: rgba(45, 140, 235, 0.09); color: var(--accent);
 }
 .dropZone.fileOver .dzTitle { color: var(--accent); }
+
+/* --- hover explanations ---
+   CEF's native tooltip takes about a second to appear, cannot be styled, and
+   renders as a pale system box that looks nothing like Premiere. This is one
+   element reused for every control, so there is nothing per-button to keep in
+   step. Pointer-events off: a tooltip must never sit between the cursor and
+   the thing it is describing. */
+.tip {
+    position: fixed; z-index: 200; max-width: 220px;
+    padding: 7px 9px; border-radius: 7px;
+    background: #34343a; border: 1px solid rgba(255, 255, 255, 0.16);
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55);
+    color: #e6e6ea; font-size: 11px; line-height: 1.42;
+    pointer-events: none; opacity: 0; transition: opacity 0.1s;
+}
+.tip.on { opacity: 1; }
+.tip b { color: #fff; font-weight: 600; }
+/* The modifier hint on its own line, quieter than the sentence above it. */
+.tip i { display: block; margin-top: 4px; font-style: normal; color: var(--text-3); }
+
+/* --- bin contents --- */
+/* Premiere has no API to open, expand or scroll to a bin — select() only
+   highlights it. So a bin's contents are shown here instead. Both this and
+   .structWrap are flex columns that own the space below the pinned tiles;
+   exactly one of them is visible at a time. */
+.structWrap, .contentsView { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+.cHead { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.cBack {
+    flex: none; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+    background: transparent; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 7px;
+    color: var(--text-2); cursor: pointer; padding: 0; transition: 0.12s;
+}
+.cBack svg { width: 15px; height: 15px; }
+.cBack:hover { color: #f0f0f4; border-color: rgba(255, 255, 255, 0.25); }
+.cDot { flex: none; width: 9px; height: 9px; border-radius: 50%; }
+.cTitle { flex: 1; min-width: 0; }
+.cName { font-size: 12.5px; font-weight: 600; color: #f0f0f4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cPath { font-size: 10px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.cList { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 1px; }
+.cRow {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; border-radius: 6px; cursor: pointer;
+}
+.cRow:hover { background: rgba(255, 255, 255, 0.06); }
+.cRow.sel { background: rgba(45, 140, 235, 0.16); box-shadow: inset 0 0 0 1px rgba(45, 140, 235, 0.4); }
+.cIco { flex: none; display: flex; color: var(--text-3); }
+.cIco svg { width: 14px; height: 14px; }
+.cRow.isBin .cIco { color: var(--accent); }
+/* Type colours. All measured on --bg: video 8.32:1, audio 7.86:1, image 6.33:1,
+   other 5.52:1 — well past the 3:1 that non-text graphics need. The icon SHAPE
+   already differs per type, so colour is a second channel rather than the only
+   one; nothing here is legible only to someone who can separate these hues. */
+.cRow.tVideo .cIco { color: #7bc4a4; }
+.cRow.tAudio .cIco { color: #e0a63f; }
+.cRow.tImage .cIco { color: #b98cd9; }
+.cRow.tOther .cIco { color: #92929b; }
+/* Offline wins over the type colour — a missing file matters more than what
+   kind of file it was. */
+.cRow.off .cIco { color: #d4787a; }
+
+.cBar { display: flex; align-items: center; justify-content: flex-end; margin-bottom: 6px; }
+.cSortWrap { position: relative; }
+.cSort {
+    display: flex; align-items: center; gap: 5px;
+    background: rgba(255, 255, 255, 0.05); color: var(--text-2);
+    border: 1px solid rgba(255, 255, 255, 0.10); border-radius: 6px;
+    font-size: 10px; padding: 4px 7px; cursor: pointer; outline: none; transition: 0.12s;
+}
+.cSort svg { width: 10px; height: 10px; flex: none; transition: transform 0.15s; }
+.cSort:hover { color: #f0f0f4; border-color: rgba(255, 255, 255, 0.22); }
+.cSortWrap.open .cSort { color: #f0f0f4; border-color: rgba(255, 255, 255, 0.28); }
+.cSortWrap.open .cSort svg { transform: rotate(180deg); }
+/* Inherits .gearPop for the surface; only the placement differs. */
+.cSortPop { top: 26px; right: 0; width: 150px; }
+.cSortOpt { font-size: 11.5px; padding: 7px 9px; }
+/* A fixed-width tick column keeps the labels on one left edge whether or not
+   they are the chosen one — without it the list shuffles sideways on select. */
+.cTick { flex: none; width: 12px; color: var(--accent); font-size: 11px; line-height: 1; }
+.cSortOpt.on .cTick::before { content: "✓"; }
+.cSortOpt.on { color: #f0f0f4; }
+/* The same control in the BIN STRUCTURE header. It sits in a row that is a
+   click target itself (the collapse header), so it must not inherit the
+   header's letter-spacing or swallow the collapse click. */
+.cRev {
+    flex: none; display: flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; margin-right: 5px; padding: 0;
+    background: rgba(255, 255, 255, 0.05); color: var(--text-2);
+    border: 1px solid rgba(255, 255, 255, 0.10); border-radius: 6px; transition: 0.12s;
+}
+.cRev svg { width: 12px; height: 12px; transition: transform 0.15s; }
+.cRev:hover { color: #f0f0f4; border-color: rgba(255, 255, 255, 0.22); }
+/* Descending points up. The rotation IS the state — there is no second icon to
+   keep in step with the stored value. */
+.cRev.desc svg { transform: rotate(180deg); }
+.cRev.desc { color: var(--accent); border-color: rgba(45, 140, 235, 0.45); }
+.tSortWrap { letter-spacing: normal; }
+/* The reverse button leads the pair, so it takes the free space. */
+.folderHeader .cRev { margin-left: auto; }
+.folderHeader .tSort { font-weight: 400; }
+.cItem { flex: 1; min-width: 0; font-size: 11.5px; color: #e6e6ec; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cMeta { flex: none; font-size: 9.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+/* Offline media is the one thing here worth interrupting for: #d4787a measures
+   4.72:1 on --bg, so the warning is not carried by hue alone. */
+.cRow.off .cItem, .cRow.off .cIco, .cRow.off .cMeta { color: #d4787a; }
+.cPlay, .cIns { flex: none; display: none; color: var(--text-3); }
+.cIns:hover { color: var(--accent); }
+.cPlay:hover { color: #f0f0f4; }
+.cIns svg { width: 13px; height: 13px; }
+.cPlay svg { width: 13px; height: 13px; }
+.cRow:hover .cPlay, .cRow:hover .cIns { display: flex; }
+.cEmpty { padding: 24px 12px; text-align: center; color: var(--text-3); font-size: 11px; line-height: 1.6; }
+.cFoot { margin-top: 8px; margin-bottom: 4px; font-size: 9.5px; color: var(--text-3); text-align: center; }
 
 /* --- add button --- */
 /* solid, not dashed — dashed now means "drop target" and nothing else */

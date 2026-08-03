@@ -2,7 +2,7 @@
 #
 # Omni Link — one-line installer for macOS.
 #
-#   curl -fsSL https://omni.link.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/mill2nn/omni-link-releases/main/install.sh | bash
 #
 # Downloads the panel straight into Premiere's extensions folder. No zip, no
 # unzip, and nothing for macOS to quarantine — which is the whole point: a
