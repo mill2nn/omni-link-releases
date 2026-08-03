@@ -255,7 +255,7 @@ function aip_projectViews() {
  */
 function aip_selectInViews(item, ids) {
     var applied = 0, confirmed = 0;
-    if (typeof app.setProjectViewSelection !== "function") return "0/0";
+    if (typeof app.setProjectViewSelection !== "function") return "0/0/1";
     var wantId = "";
     try { wantId = String(item.nodeId); } catch (e0) { wantId = ""; }
 
@@ -272,7 +272,38 @@ function aip_selectInViews(item, ids) {
             }
         } catch (e3) {}
     }
-    return applied + "/" + confirmed;
+    /* And now the question that actually matters to the user: is the item
+     * selected in the view they are LOOKING AT?
+     *
+     * getCurrentProjectViewSelection reports the frontmost view, including one
+     * this code cannot enumerate — a bin opened as its own "Bin: X" tab is not
+     * a project view, so setProjectViewSelection can never reach it. If the
+     * front view does not hold what we just selected, the user is parked inside
+     * a bin and nothing we do will move them out. That is worth saying instead
+     * of appearing to work.
+     *
+     * Reported as a third field, and only ever "0" when we positively saw a
+     * different selection in front. Unknown counts as fine — a warning that
+     * fires when we cannot tell is a warning people learn to ignore. */
+    var current = "1";
+    try {
+        if (typeof app.getCurrentProjectViewSelection === "function") {
+            var cur = app.getCurrentProjectViewSelection();
+            if (cur) {
+                var found = false;
+                for (var c = 0; c < cur.length; c++) {
+                    var cid = "";
+                    try { cid = String(cur[c].nodeId); } catch (e4) { cid = ""; }
+                    if (cid !== "" && cid === wantId) { found = true; break; }
+                }
+                // An empty selection in front tells us nothing useful; only a
+                // front view holding something ELSE is evidence.
+                if (!found && cur.length > 0) current = "0";
+            }
+        }
+    } catch (e5) {}
+
+    return applied + "/" + confirmed + "/" + current;
 }
 
 function aip_climbOut() {
@@ -415,14 +446,14 @@ function aip_revealBin(binPath) {
      * happening. setProjectViewSelection takes a view ID, so every tab of this
      * project gets it, including whichever one the user is looking at. */
     var ids = aip_projectViews();
-    var tally = "0/0";
+    var tally = "0/0/1";
     if (ids.length) {
         // Select the bin first: on a bin, select() is also what sets the import
         // target, and that is worth keeping.
         try { if (typeof bin.select === "function") bin.select(); } catch (e2) {}
         tally = aip_selectInViews(target, ids);
     }
-    if (tally !== "0/0") return "OKVIEW:" + tally + ":" + landed;
+    if (tally.indexOf("0/0/") !== 0) return "OKVIEW:" + tally + ":" + landed;
 
     /* Fallback for a Premiere without the view API: the old behaviour. */
     var can = false;

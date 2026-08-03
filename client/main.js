@@ -22,7 +22,7 @@ var cs = new CSInterface();
 // Bump this AND ExtensionBundleVersion in CSXS/manifest.xml together — the
 // shareable-zip script fails the build if the two ever disagree, because
 // "which version are you on?" has to have one answer.
-var VERSION = "1.3.2";
+var VERSION = "1.3.4";
 
 /*
  * What Import picks up. A format missing from here is skipped in silence — the
@@ -2800,50 +2800,53 @@ function revealBinPath(np, label) {
     var node = { name: label };
     cs.evalScript("aip_revealBin(" + q(np.join("\t")) + ")", function (res) {
         res = String(res == null ? "" : res);
-        /* "|noout" means the host could not force the Project panel back to the
-         * top level first, because the project has no loose file at its root to
-         * do it with. Everything still got selected — but if the panel happened
-         * to be opened inside a different bin, it will not have moved, and the
-         * only honest thing is to say so instead of claiming success. */
         var stuck = res.indexOf("|noout") >= 0;
-        var advice = stuck ? " If the Project panel didn’t move, press its back arrow first." : "";
+
+        /* Short line, action first. The old messages ran to three clauses and
+         * the status bar truncated them mid-sentence — losing exactly the part
+         * that said what to do. Counts and codes go to the hover box. */
+        var why = binOpenPref > 0
+            ? "Bins are set to open in a " + (binOpenPref === 2 ? "new window" : "new tab") +
+              ". A bin tab is not something a panel can reach — set Settings ▸ General ▸ " +
+              "Bins ▸ Double-click to Open in Place, or Alt-double-click bins."
+            : "";
+
         if (res.indexOf("OKVIEW:") === 0) {
-            /* The good path: the selection was applied to each project VIEW by
-             * ID. A bin opened by double-click is its own tab, and a tab is a
-             * separate view — which is why plain select() looked like it did
-             * nothing. The view count is worth showing: if it says 1 while two
-             * tabs are open, the API is not seeing them all. */
             var parts = res.substring(7).split(":");
-            var tally = String(parts.shift());          // "<applied>/<confirmed>"
+            var tally = String(parts.shift());              // applied/confirmed/front
             var clip = parts.join(":");
             var half = tally.split("/");
-            var applied = half[0], confirmed = half[1];
-            /* Confirmed means Premiere reports the item as selected afterwards.
-             * If it is confirmed and the panel still did not move, the panel
-             * cannot be driven by script — which is a real answer, not a bug to
-             * keep chasing. Saying so beats another round of guessing. */
-            var note = (confirmed === applied)
-                ? " — selection confirmed in " + applied + (applied === "1" ? " view" : " views")
-                : " — only " + confirmed + " of " + applied + " views took it";
-            setStatus("Opened “" + node.name + "”" + (clip ? ": " + clip : "") + note + "." + binTabNote(),
-                confirmed === applied ? "ok" : "");
+            var applied = half[0], confirmed = half[1], front = half[2];
+            var diag = "Premiere reported: selection applied to " + applied +
+                " view(s), confirmed in " + confirmed + ", frontmost view " +
+                (front === "0" ? "holding something else" : "consistent") + "." +
+                (why ? " " + why : "");
+
+            if (front === "0") {
+                setStatus("Go up a level in the Project panel, then click again.", "error", diag);
+            } else if (confirmed !== applied) {
+                // The call ran and the selection did not stick. Nothing further
+                // here helps, so say the one thing that might.
+                setStatus("Premiere didn’t take the selection — click once in the Project panel, then try again.",
+                    "error", diag);
+            } else {
+                setStatus("Opened “" + node.name + "”" + (clip ? " — " + clip : ""), "ok", diag);
+            }
         } else if (res.indexOf("OKIN") === 0) {
-            // Landed inside: Premiere had to open the bin to reveal the clip.
-            setStatus("Opened “" + node.name + "” — " + res.substring(res.indexOf(":") + 1) + "." + advice + binTabNote(),
-                stuck ? "" : "ok");
+            setStatus("Opened “" + node.name + "” — " + res.substring(res.indexOf(":") + 1),
+                stuck ? "" : "ok",
+                stuck ? ("Could not return the Project panel to the top level first." + (why ? " " + why : "")) : why);
         } else if (res === "OK" || res === "OK|noout") {
-            // Only the bin got selected, so the panel will have highlighted it
-            // without necessarily moving. Say which happened rather than let a
-            // half-result read as a full one.
-            setStatus("Highlighted “" + node.name + "” — no files in it to open it with." + advice, "");
+            setStatus("“" + node.name + "” has no files to open it with.", "",
+                "A bin holding only sub-bins cannot be opened by selecting something inside it." + (why ? " " + why : ""));
         } else if (res === "NOBIN") {
-            // The panel's tree and the real project have drifted apart — usually
-            // the bin was renamed or deleted in Premiere, or never created here.
-            setStatus("“" + node.name + "” isn’t in this project yet — Import or Create structure will add it.", "error");
+            setStatus("“" + node.name + "” isn’t in this project yet.", "error",
+                "Import, or Create structure, will add it.");
         } else if (res === "NOSUPPORT") {
-            setStatus("This Premiere build can’t jump to a bin. " + modKeyName() + "-click opens the folder instead.", "error");
+            setStatus("This Premiere can’t jump to a bin.", "error",
+                "ProjectItem.select is missing on this build. " + modKeyName() + "-click opens the folder instead.");
         } else {
-            setStatus("Couldn’t show “" + node.name + "”.", "error");
+            setStatus("Couldn’t show “" + node.name + "”.", "error", "Premiere returned: " + (res || "nothing"));
         }
     });
 }
@@ -2868,10 +2871,16 @@ function ensureFolder(path) {
 // ====================================================================
 //  status + gear + views + project
 // ====================================================================
-function setStatus(msg, kind) {
+/* msg is what to DO, kept short enough to read at a glance. detail is the
+ * diagnostic — view counts, host return codes, the long explanation — parked in
+ * the hover box where it is available without being in the way. Putting both in
+ * the line itself is what made the last one truncate before it reached the
+ * instruction. */
+function setStatus(msg, kind, detail) {
     var el = document.getElementById("status");
     el.textContent = msg;
     el.className = "status" + (kind ? (" " + kind) : "");
+    if (detail) el.setAttribute("data-tip", detail); else el.removeAttribute("data-tip");
     if (kind === "ok" || kind === "error") {     // brief flash so it's noticed
         void el.offsetWidth;                     // restart the animation
         el.classList.add("flash");

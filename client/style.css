@@ -652,10 +652,17 @@ button { font-family: inherit; cursor: pointer; }
 .createBtn svg { width: 14px; height: 14px; }
 
 /* --- one-line status --- */
+/* Two lines, then ellipsis. One nowrap line silently swallowed the end of every
+   message — including the part telling you what to do about it — and at 300px
+   wide that is most of the sentence. Anything longer than two lines belongs in
+   the hover detail, not here. */
 .status {
     font-size: 11.5px; margin-bottom: 10px; color: var(--text-2); transition: 0.12s;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    overflow: hidden; line-height: 1.35;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
 }
+/* There is more to read: a quiet cue, since the box only appears on hover. */
+.status[data-tip] { border-bottom: 1px dotted rgba(255, 255, 255, 0.18); padding-bottom: 2px; }
 .status:empty { margin-bottom: 0; }
 .status.ok { color: var(--ok); }
 .status.error { color: var(--warn); }
