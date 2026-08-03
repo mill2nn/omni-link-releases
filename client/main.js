@@ -22,7 +22,7 @@ var cs = new CSInterface();
 // Bump this AND ExtensionBundleVersion in CSXS/manifest.xml together — the
 // shareable-zip script fails the build if the two ever disagree, because
 // "which version are you on?" has to have one answer.
-var VERSION = "1.3.7";
+var VERSION = "1.3.8";
 
 /*
  * What Import picks up. A format missing from here is skipped in silence — the
@@ -299,6 +299,47 @@ function joinPath(folder, name) {
     return f + sep + name;
 }
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
+
+/* ---------- one shape for a stored folder path ----------
+ *
+ * The paths reaching this panel do not all look the same. A drag from Finder
+ * arrives as a percent-encoded file:// URL. CEP's own folder picker
+ * (cep.fs.showOpenDialog) hands back the same thing on macOS, which is the bug
+ * Bom hit: fs.statSync("file:///Users/…/Shared%20drives") throws, so the bin was
+ * painted as a missing link — while clicking the chip still opened the right
+ * folder, because macOS `open` accepts a URL where Node's fs does not. Premiere
+ * cannot use one either, so those bins imported nothing.
+ *
+ * So every path is put through here on the way in, and everything downstream —
+ * the existence check, the import, Finder — gets a plain path.
+ */
+function pathExists(p) {
+    var fs = nodeFs();
+    if (!p || !fs) return false;
+    try { fs.statSync(p); return true; } catch (e) { return false; }
+}
+function normalizePath(p) {
+    if (!p) return "";
+    p = String(p);
+    var wasUrl = /^file:\/\//i.test(p);
+    if (wasUrl) p = p.replace(/^file:\/\/(?:localhost)?/i, "");
+    if (/%[0-9A-Fa-f]{2}/.test(p)) {
+        var dec = p;
+        try { dec = decodeURIComponent(p); } catch (e) { dec = p; }
+        // A literal % is legal in a folder name ("50%2B Final" decodes to
+        // "50+ Final" and would be wrong), so outside a URL the decoded form is
+        // only taken when it is the one that actually exists on disk.
+        if (dec !== p && (wasUrl || (!pathExists(p) && pathExists(dec)))) p = dec;
+    }
+    // Windows arrives as file:///C:/Work/Kling → drop the leading slash
+    if (/^\/[A-Za-z]:/.test(p)) p = p.substring(1);
+    // Finder's opaque bookmark form; realpath is the only way through it
+    if (p.indexOf("/.file/id=") >= 0) {
+        var fs2 = nodeFs();
+        if (fs2) { try { p = fs2.realpathSync(p); } catch (e) {} }
+    }
+    return p;
+}
 function colorIdxOf(node) { return (node.color && LABEL_INDEX[node.color] != null) ? LABEL_INDEX[node.color] : ""; }
 
 // ---------- tree helpers ----------
@@ -307,6 +348,13 @@ function normalize(nodes) {
         var n = nodes[i];
         if (typeof n.name !== "string") n.name = "New bin";
         if (typeof n.folder !== "string") n.folder = "";
+        // Repair links saved before normalizePath existed. Only when the stored
+        // path does NOT resolve and the cleaned one does, so this can never turn
+        // a working link into a broken one.
+        else if (n.folder && /^file:\/\/|%[0-9A-Fa-f]{2}/i.test(n.folder)) {
+            var fixed = normalizePath(n.folder);
+            if (fixed !== n.folder && !pathExists(n.folder) && pathExists(fixed)) n.folder = fixed;
+        }
         if (typeof n.color !== "string") n.color = "";
         if (typeof n.pinned !== "boolean") n.pinned = false;
         if (n.pinIdx != null && typeof n.pinIdx !== "number") delete n.pinIdx;
@@ -435,6 +483,50 @@ function watchPanelWidth() {
     });
 }
 function expandTree() { localStorage.setItem(COLLAPSE_KEY, "0"); applyCollapsed(); }
+
+// ---------- fold every bin at once ----------
+// node.open is per-bin and already saved with the tree, so this is only those
+// flags set in one pass. Deliberately NOT an undo step: nothing is lost, and
+// the same button is the way back.
+function foldableCount() {
+    var n = 0;
+    forEachNode(function (x) { if (x.children && x.children.length) n++; });
+    return n;
+}
+function anyBinOpen() {
+    var open = false;
+    forEachNode(function (x) { if (x.children && x.children.length && x.open !== false) open = true; });
+    return open;
+}
+function setFoldAll(open) {
+    forEachNode(function (x) { if (x.children && x.children.length) x.open = open; });
+    saveTree();
+    renderTree();
+}
+function toggleFoldAll() {
+    // "Anything still open" folds, so one click always tidies. Only when every
+    // bin is already shut does the button open them back up.
+    var wasOpen = anyBinOpen();
+    setFoldAll(!wasOpen);
+    setStatus(wasOpen ? "✓ Folded every bin." : "✓ Opened every bin.", "ok");
+}
+function syncFoldBtn() {
+    var b = document.getElementById("foldAllBtn");
+    if (!b) return;
+    var n = foldableCount();
+    // Search force-opens whatever matches, so folding under it would look
+    // broken rather than do nothing.
+    var dead = !n || !!searchTerm;
+    var folded = !!n && !anyBinOpen();
+    b.disabled = dead;
+    b.classList.toggle("off", dead);
+    b.classList.toggle("allFolded", folded);
+    b.setAttribute("data-tip",
+        !n ? "Fold every bin.<i>Nothing to fold — no bin here has sub-bins yet.</i>" :
+        searchTerm ? "Fold every bin.<i>Clear the search first: matching bins are opened for you.</i>" :
+        folded ? "Open every bin.<i>All " + n + " are folded shut right now.</i>" :
+        "Fold every bin shut.<i>Click again to open them all back up.</i>");
+}
 
 // ====================================================================
 //  RENDER (main view)
@@ -1976,6 +2068,7 @@ function renderTree() {
     gapEls[flatRows.length] = host.appendChild(makeGap());
     cacheRects(host);
     syncDropZone();
+    syncFoldBtn();
 }
 
 function makeGap() {
@@ -2694,7 +2787,10 @@ function linkFolder(node) {
     if (!window.cep || !window.cep.fs || !window.cep.fs.showOpenDialog) { setStatus("The folder picker only works inside Premiere.", "error"); return; }
     var result = window.cep.fs.showOpenDialog(false, true, "Choose a folder to link", "");
     if (result && result.data && result.data.length > 0) {
-        node.folder = result.data[0];
+        // CEP returns a file:// URL here on macOS, not a path. Unnormalized it
+        // saved a link that looked fine, opened fine in Finder, and imported
+        // nothing — see normalizePath.
+        node.folder = ensureFolder(normalizePath(result.data[0]));
         saveTree(); checkLinks(); renderAll();
         setStatus("✓ Linked “" + folderLeaf(node.folder) + "” to " + node.name + ".", "ok");
     }
@@ -3012,17 +3108,15 @@ function runImports(jobs, madeBit) {
 
 function filePathsFromDrop(e) {
     var dt = e.dataTransfer, out = [];
-    if (dt.files && dt.files.length) { for (var i = 0; i < dt.files.length; i++) if (dt.files[i].path) out.push(dt.files[i].path); }
+    if (dt.files && dt.files.length) { for (var i = 0; i < dt.files.length; i++) if (dt.files[i].path) out.push(normalizePath(dt.files[i].path)); }
     if (out.length) return out;
     var uris = (dt.getData("text/uri-list") || dt.getData("text/plain") || "").split("\n");
     for (var j = 0; j < uris.length; j++) {
         var u = uris[j].replace(/^\s+|\s+$/g, "");
         if (u.indexOf("file://") !== 0) continue;
-        var raw = decodeURIComponent(u.substring(7));
-        if (raw.indexOf("localhost/") === 0) raw = raw.substring(9);
-        // Windows arrives as file:///C:/Work/Kling → strip the leading slash
-        if (/^\/[A-Za-z]:/.test(raw)) raw = raw.substring(1);
-        if (raw.indexOf("/.file/id=") >= 0) { var fs = nodeFs(); if (fs) { try { raw = fs.realpathSync(raw); } catch (e2) {} } }
+        // All of the decoding lives in normalizePath now, so the drop path and
+        // the folder picker cannot drift apart again.
+        var raw = normalizePath(u);
         if (raw) out.push(raw);
     }
     return out;
@@ -3975,19 +4069,38 @@ var HTTP_TIMEOUT_MS = 15000;
 
 var updateInfo = null;          // parsed latest.json once a newer version is seen
 
-/* raw.githubusercontent.com sits behind a CDN that caches for minutes. That is
- * fine for the panel files and fatal for latest.json: publish a release and the
- * check keeps reading the OLD version number, so nobody is offered the update
- * and there is no error anywhere to explain it. Seen three times in one day —
- * 1.3.6 published while raw still answered 1.3.5.
+/* Where the updater reads from, and why it is not raw.githubusercontent.
  *
- * A unique query string is what actually defeats it; the no-cache headers below
- * are belt and braces. Applied to the panel files too, because downloading a
- * stale main.js beside a fresh manifest is a worse failure than a slow one. */
+ * raw sits behind a CDN with max-age=300. Publish a release and the check keeps
+ * reading the OLD version for up to five minutes: equal to what is installed,
+ * so no update is offered and nothing reports an error. Measured, not guessed —
+ * with 1.3.7 in the repo, raw answered 1.3.6 to a plain request, to a unique
+ * query string, and to no-cache headers alike. GitHub ignores all three:
+ *
+ *     cache-control: max-age=300 · x-cache: HIT · source-age: 233
+ *
+ * The contents API answers from the repository itself and was correct
+ * immediately. Accept: vnd.github.raw returns the bytes rather than base64.
+ *
+ * raw stays as the fallback for the case the API refuses — unauthenticated
+ * calls are limited to 60 an hour per address, and a shared studio connection
+ * could reach that. A late update is worth more than no update.
+ */
+function apiUrl(rel) {
+    return "https://api.github.com/repos/" + UPDATE_OWNER + "/" + UPDATE_REPO +
+        "/contents/" + rel + "?ref=" + UPDATE_BRANCH;
+}
 function updateUrl(rel) {
     return "https://raw.githubusercontent.com/" + UPDATE_OWNER + "/" + UPDATE_REPO +
-        "/" + UPDATE_BRANCH + "/" + rel +
-        "?nocache=" + Date.now() + "-" + Math.floor(Math.random() * 1e6);
+        "/" + UPDATE_BRANCH + "/" + rel;
+}
+/* Try the API, fall back to raw. Both paths end at the same callback, so every
+ * caller gets bytes without caring which answered. */
+function fetchUpdateFile(rel, cb) {
+    httpsGet(apiUrl(rel), function (err, buf) {
+        if (!err && buf && buf.length) { cb(null, buf); return; }
+        httpsGet(updateUrl(rel), cb);
+    }, 0, { "Accept": "application/vnd.github.raw" });
 }
 
 // Where are we installed? The panel is served from <extension>/client/index.html,
@@ -4028,22 +4141,24 @@ function safeRelPath(rel) {
     return true;
 }
 
-function httpsGet(url, cb, depth) {
+function httpsGet(url, cb, depth, extraHeaders) {
     var https = nodeReq("https");
     if (!https) { cb("Node unavailable"); return; }
     if ((depth || 0) > 3) { cb("too many redirects"); return; }
     var req, done = false;
     function finish(err, buf) { if (done) return; done = true; cb(err, buf); }
     try {
-        req = https.get(url, { headers: {
-            "User-Agent": "OmniLink/" + VERSION,
+        var headers = {
+            "User-Agent": "OmniLink/" + VERSION,     // the GitHub API rejects requests without one
             "Cache-Control": "no-cache, no-store, max-age=0",
             "Pragma": "no-cache"
-        } }, function (res) {
+        };
+        if (extraHeaders) for (var hk in extraHeaders) headers[hk] = extraHeaders[hk];
+        req = https.get(url, { headers: headers }, function (res) {
             var code = res.statusCode;
             if ((code === 301 || code === 302 || code === 307 || code === 308) && res.headers.location) {
                 res.resume();
-                httpsGet(res.headers.location, cb, (depth || 0) + 1);
+                httpsGet(res.headers.location, cb, (depth || 0) + 1, extraHeaders);
                 done = true;
                 return;
             }
@@ -4097,7 +4212,7 @@ function hideUpdateBar() {
 // failures only surface when they asked for the check themselves.
 function checkForUpdate(manual) {
     if (manual) showUpdateBar("busy", "Checking for updates…", "", null);
-    httpsGet(updateUrl("latest.json"), function (err, buf) {
+    fetchUpdateFile("latest.json", function (err, buf) {
         if (err) {
             if (manual) showUpdateBar("bad", "Couldn’t check for updates — " + esc(err), "Retry", function () { checkForUpdate(true); });
             return;
@@ -4142,7 +4257,10 @@ function applyUpdate() {
     (function next() {
         if (idx >= n) { verifyThenSwap(); return; }
         var rel = files[idx];
-        httpsGet(updateUrl(rel), function (err, buf) {
+        // Same source as the version check. Mixing a fresh latest.json with
+        // CDN-stale files would fail the manifest cross-check below and read as
+        // a corrupt download rather than a cache.
+        fetchUpdateFile(rel, function (err, buf) {
             if (err || !buf || !buf.length) {
                 showUpdateBar("bad", "Download failed (" + esc(rel) + ") — nothing was changed.", "Retry", applyUpdate);
                 return;
@@ -4257,6 +4375,15 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("setupBtn").onclick = readProjectBins;
     document.getElementById("addBinBtn").onclick = addTopBin;
     document.getElementById("treeHeader").onclick = toggleCollapsed;
+    // Sits inside that header, so it has to keep its click to itself or folding
+    // the bins would fold the whole section away underneath them. Assigned, not
+    // added: this runs more than once, and a second listener would fold and
+    // unfold on the same click.
+    document.getElementById("foldAllBtn").onclick = function (e) {
+        e.stopPropagation();
+        e.preventDefault();
+        if (!this.disabled) toggleFoldAll();
+    };
 
     document.getElementById("gearBtn").onclick = function (e) { e.stopPropagation(); toggleGear(); };
     document.getElementById("giPresets").onclick = function () { closeGear(); openBuilder(); };

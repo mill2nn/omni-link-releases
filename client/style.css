@@ -618,9 +618,16 @@ button { font-family: inherit; cursor: pointer; }
     box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55);
     color: #e6e6ea; font-size: 11px; line-height: 1.42;
     pointer-events: none; opacity: 0; transition: opacity 0.1s;
+    /* A file path has no spaces to wrap at, so without this it ran straight out
+       of the box and the part that mattered — the end of the path — was the part
+       that got cut off. */
+    overflow-wrap: anywhere; word-break: break-word;
 }
 .tip.on { opacity: 1; }
 .tip b { color: #fff; font-weight: 600; }
+/* A bold lead-in is a heading, so it gets its own line instead of running into
+   the sentence after it. */
+.tip b:first-child { display: block; }
 /* The modifier hint on its own line, quieter than the sentence above it. */
 .tip i { display: block; margin-top: 4px; font-style: normal; color: var(--text-3); }
 
@@ -702,8 +709,19 @@ button { font-family: inherit; cursor: pointer; }
 .cRev.desc svg { transform: rotate(180deg); }
 .cRev.desc { color: var(--accent); border-color: rgba(45, 140, 235, 0.45); }
 .tSortWrap { letter-spacing: normal; }
-/* The reverse button leads the pair, so it takes the free space. */
+/* The fold button leads the group, so it takes the free space; the two after
+   it sit tight against it. */
 .folderHeader .cRev { margin-left: auto; }
+.folderHeader .cFold + .cRev { margin-left: 0; }
+/* Two icons rather than one rotated: chevrons pointing in and chevrons pointing
+   out are opposites you can read at a glance, and a 180° flip of either one
+   lands back on itself. */
+.cFold .fOut { display: none; }
+.cFold.allFolded .fIn { display: none; }
+.cFold.allFolded .fOut { display: block; }
+/* Dimmed, not hidden — a control that vanishes shuffles the header. */
+.cFold.off { opacity: 0.35; cursor: default; }
+.cFold.off:hover { color: var(--text-2); border-color: rgba(255, 255, 255, 0.10); }
 .folderHeader .tSort { font-weight: 400; }
 .cItem { flex: 1; min-width: 0; font-size: 11.5px; color: #e6e6ec; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cMeta { flex: none; font-size: 9.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }

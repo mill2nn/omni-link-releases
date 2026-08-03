@@ -28,7 +28,7 @@ either.
 <details>
 <summary>Prefer clicking to typing?</summary>
 
-**[⬇ Download OmniLink-v1.3.7.zip](https://github.com/mill2nn/omni-link-releases/releases/latest)**
+**[⬇ Download OmniLink-v1.3.8.zip](https://github.com/mill2nn/omni-link-releases/releases/latest)**
 
 Unzip it, quit Premiere, double-click `Install Omni Link (Mac).command` or
 `Install Omni Link (Windows).bat`, then reopen Premiere.
@@ -55,4 +55,4 @@ any newer version with a button.
 Built output only: no source, no history, no tests. `latest.json` is what the
 panel reads to spot a new version.
 
-Current version: **1.3.7**
+Current version: **1.3.8**
