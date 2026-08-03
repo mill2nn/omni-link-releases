@@ -41,6 +41,10 @@
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h3l2 2h4a2 2 0 0 1 2 2" /><path d="M7 12h13a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2z" /></svg>
                             <span id="giMirrorLabel">Mirror subfolders: on</span>
                         </button>
+                        <button class="gearItem" id="giDepth" data-tip="Draw top-level bins as headings, with their sub-bins smaller and indented further.<i>Switch it off to go back to every bin drawn the same.</i>">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16" /><path d="M9 12h11" /><path d="M9 18h11" /><path d="M5 9v9" /></svg>
+                            <span id="giDepthLabel">Bin levels: clearer</span>
+                        </button>
                         <button class="gearItem" id="giLog" data-tip="Every import that brought files in, newest first — which bin, and which files.">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h9" /><circle cx="18" cy="18" r="3" /></svg>
                             Import log
@@ -209,28 +213,42 @@
         <!-- ============ IMPORT LOG ============ -->
         <div id="logView" class="view" style="display:none;">
             <div class="header">
-                <button id="logBack" class="navBtn" data-tip="Back to the main panel." aria-label="Back">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
-                </button>
-                <div class="htext">
-                    <h1>Import log</h1>
-                    <div class="projName">what came in, newest first</div>
+                <!-- headerTop, not the header itself: .header is a column, so
+                     buttons put straight into it stack one per line. -->
+                <div class="headerTop">
+                    <button id="logBack" class="navBtn" data-tip="Back to the main panel." aria-label="Back">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+                    </button>
+                    <div class="htext">
+                        <h1 id="logTitle">Import log</h1>
+                        <div class="projName" id="logSub">what came in, newest first</div>
+                    </div>
+                    <!-- Only when the log is showing one bin. Without it the view
+                         looks like the whole history with most of it missing. -->
+                    <button id="logAll" class="navBtn" style="display:none;" data-tip="Show every bin's imports, not just this one." aria-label="Show all bins">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+                    </button>
+                    <button id="logDetail" class="navBtn" aria-label="Show what Premiere reported">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></svg>
+                    </button>
+                    <button id="logClear" class="navBtn" data-tip="Forget this project's import history.<i>Your files and bins are untouched — this only clears the record.</i>" aria-label="Clear the log">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" /></svg>
+                    </button>
                 </div>
-                <button id="logClear" class="navBtn" data-tip="Forget this project's import history.<i>Your files and bins are untouched — this only clears the record.</i>" aria-label="Clear the log">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" /></svg>
-                </button>
             </div>
             <div id="logList" class="logList"></div>
         </div>
 
         <div id="builderView" class="view" style="display:none;">
             <div class="header">
-                <button id="builderBack" class="navBtn" data-tip="Back to the main panel." aria-label="Back">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
-                </button>
-                <div class="htext">
-                    <h1>Preset builder</h1>
-                    <div class="projName">structure + colors · reused across projects</div>
+                <div class="headerTop">
+                    <button id="builderBack" class="navBtn" data-tip="Back to the main panel." aria-label="Back">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+                    </button>
+                    <div class="htext">
+                        <h1>Preset builder</h1>
+                        <div class="projName">structure + colors · reused across projects</div>
+                    </div>
                 </div>
             </div>
 

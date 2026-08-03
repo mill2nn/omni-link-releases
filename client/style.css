@@ -454,6 +454,57 @@ button { font-family: inherit; cursor: pointer; }
     width: 1px; background: rgba(255, 255, 255, 0.10); pointer-events: none;
 }
 
+/* --- bin vs sub-bin at a glance (gear > Bin levels) ---
+   Everything here is scoped to body.depthCues, so switching it off in the gear
+   leaves the tree byte-for-byte as it was rather than "nearly as it was".
+   The matching indent is a number, so it lives in indentPx() instead. */
+body.depthCues .trow[data-depth="0"] .tname { font-size: 13px; font-weight: 700; color: #f4f4f7; }
+/* 6.7:1 on the row background — nested, not disabled. */
+body.depthCues .trow:not([data-depth="0"]) .tname { font-size: 11.5px; font-weight: 500; color: #a8a8b2; }
+body.depthCues .trow[data-depth="0"] .ticon svg { width: 16px; height: 16px; }
+body.depthCues .trow:not([data-depth="0"]) .ticon { color: var(--text-2); }
+body.depthCues .trow:not([data-depth="0"]) .ticon svg { width: 13px; height: 13px; }
+/* With 22px of indent there is finally room to see this. */
+body.depthCues .trow:not([data-depth="0"])::after { left: -12px; background: rgba(255, 255, 255, 0.18); }
+/* Tighter sub-bin rows, so a group looks like a group rather than a ladder. */
+body.depthCues .trow[data-depth="0"] { padding-top: 10px; padding-bottom: 10px; margin-top: 2px; }
+body.depthCues .trow:not([data-depth="0"]) { padding-top: 6px; padding-bottom: 6px; }
+
+/* --- level 2 and deeper ---
+   The first pass split level 0 from everything else, which left 1 and 2 looking
+   identical apart from indent. Two more cues, and neither of them is more
+   dimming — #9a9aa2 measures 5.6:1 and going further starts to read as
+   disabled rather than nested. */
+body.depthCues .trow:not([data-depth="0"]):not([data-depth="1"]) .tname {
+    font-size: 11px; font-weight: 400; color: #9a9aa2;
+}
+body.depthCues .trow:not([data-depth="0"]):not([data-depth="1"]) .ticon { color: var(--text-3); }
+body.depthCues .trow:not([data-depth="0"]):not([data-depth="1"]) .ticon svg { width: 12px; height: 12px; }
+/* One guide rail per ancestor, so levels can be counted instead of guessed at.
+   box-shadow copies the 1px rail leftwards in 22px steps — the same 22px the
+   rows are indented by — so no extra markup exists and nothing about the row's
+   hit-testing changes. Outer rails are fainter: the nearest parent is the one
+   worth following. */
+body.depthCues .trow[data-depth="2"]::after { box-shadow: -22px 0 0 0 rgba(255, 255, 255, 0.11); }
+body.depthCues .trow[data-depth="3"]::after {
+    box-shadow: -22px 0 0 0 rgba(255, 255, 255, 0.13), -44px 0 0 0 rgba(255, 255, 255, 0.09);
+}
+body.depthCues .trow[data-depth="4"]::after {
+    box-shadow: -22px 0 0 0 rgba(255, 255, 255, 0.14), -44px 0 0 0 rgba(255, 255, 255, 0.11),
+                -66px 0 0 0 rgba(255, 255, 255, 0.08);
+}
+body.depthCues .trow[data-depth="5"]::after {
+    box-shadow: -22px 0 0 0 rgba(255, 255, 255, 0.14), -44px 0 0 0 rgba(255, 255, 255, 0.12),
+                -66px 0 0 0 rgba(255, 255, 255, 0.10), -88px 0 0 0 rgba(255, 255, 255, 0.07);
+}
+/* Deeper than 5 stops gaining rails rather than growing a rule per level —
+   mirroring caps nesting at 5, so past here it is someone nesting by hand. */
+body.depthCues .trow[data-depth="6"]::after {
+    box-shadow: -22px 0 0 0 rgba(255, 255, 255, 0.14), -44px 0 0 0 rgba(255, 255, 255, 0.12),
+                -66px 0 0 0 rgba(255, 255, 255, 0.10), -88px 0 0 0 rgba(255, 255, 255, 0.08),
+                -110px 0 0 0 rgba(255, 255, 255, 0.06);
+}
+
 /* fold / unfold parent bins */
 .trow .tchev {
     flex: none; width: 15px; height: 15px; padding: 0; border: none; border-radius: 4px;
@@ -580,30 +631,115 @@ button { font-family: inherit; cursor: pointer; }
 .trow.hasNew { background: rgba(45, 140, 235, 0.09); }
 .pinTile.hasNew { box-shadow: inset 0 0 0 1px rgba(45, 140, 235, 0.55); }
 .pinTile .newBadge { position: absolute; top: 7px; right: 7px; }
+/* The count is also the way in to the log, so it has to look pressable. The one
+   inside the log view is a label, not a control — .clickable is only set where
+   there is actually a click. */
+.newBadge.clickable { cursor: pointer; }
+.newBadge.clickable:hover { background: var(--accent); box-shadow: 0 0 0 2px rgba(45, 140, 235, 0.28); }
+.newBadge.clickable:active { transform: translateY(1px); }
 
-/* --- import log --- */
-.logList { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
-.logRun { border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 9px 10px; }
-.logWhen { font-size: 10px; color: var(--text-3); margin-bottom: 2px; }
-.logTotal { font-size: 12px; font-weight: 600; color: #f0f0f4; margin-bottom: 7px; }
-.logBin { margin-bottom: 6px; }
-.logBinName { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); margin-bottom: 3px; }
-.logBinName .newBadge { background: rgba(45, 140, 235, 0.22); color: #9fc9f5; }
-.logFile {
-    font-size: 10.5px; color: #c8c8d2; padding-left: 10px; line-height: 1.5;
+/* --- per-bin import log button ---
+   Only rendered on bins the log has something to say about, so it reads as
+   "there is something here" rather than as one more control on every row. */
+.tlog {
+    flex: none; display: flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; padding: 0; margin-left: 1px;
+    background: transparent; color: var(--text-3);
+    border: 1px solid transparent; border-radius: 5px; transition: 0.12s;
+}
+.tlog svg { width: 13px; height: 13px; }
+.tlog:hover { color: #f0f0f4; background: rgba(255, 255, 255, 0.09); border-color: rgba(255, 255, 255, 0.16); }
+.tlog:active { transform: translateY(1px); }
+/* A bin that just received files: the button picks up the same blue as its badge. */
+.trow.hasNew .tlog { color: #9fc9f5; }
+
+/* --- import log ---
+   Bigger and quieter than it was. The wall of raw per-bin replies is gone from
+   the default view: what is left is the folder and the file names, at a size
+   that can be read at a glance, with the diagnostics one button away. */
+.logList { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding-bottom: 8px; }
+.logRun {
+    border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 10px;
+    padding: 11px 12px 9px; background: rgba(255, 255, 255, 0.022);
+}
+.logHead {
+    display: flex; align-items: baseline; gap: 8px;
+    padding-bottom: 8px; margin-bottom: 9px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.logWhen { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; color: #f0f0f4; }
+.logCount { flex: none; font-size: 10.5px; color: var(--text-3); }
+/* A run that actually brought something in is the one worth spotting. */
+.logCount.got { color: #9fc9f5; font-weight: 600; }
+
+.logBin { margin-bottom: 10px; }
+.logBin:last-child { margin-bottom: 0; }
+.logBinHead { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+.logBinIco { flex: none; display: flex; color: var(--text-3); }
+.logBinIco svg { width: 13px; height: 13px; }
+.logBinName {
+    flex: 1; min-width: 0; font-size: 12px; font-weight: 600; color: #e6e6ec;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.logMore { font-size: 10px; color: var(--text-3); padding-left: 10px; }
+.logBinName .newBadge { background: rgba(45, 140, 235, 0.22); color: #9fc9f5; }
+/* Where they came from. Read from the end, so the last few segments are shown
+   and the whole path is on hover — a Cloud Storage path is otherwise three
+   lines of prefix before anything meaningful. */
+.logFrom {
+    font-size: 10px; color: var(--text-3); margin: 0 0 5px 19px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    border-bottom: 1px dotted rgba(255, 255, 255, 0.14); display: inline-block; max-width: 100%;
+}
+.logFile {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11.5px; color: #d2d2da; padding: 2px 0 2px 19px; line-height: 1.45;
+}
+.logFileIco { flex: none; display: flex; }
+.logFileIco svg { width: 12px; height: 12px; }
+.logFileName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The same four colours the contents list uses, so a clip looks like itself
+   wherever it is named. */
+.logFile.tVideo .logFileIco { color: #7bc4a4; }
+.logFile.tAudio .logFileIco { color: #e0a63f; }
+.logFile.tImage .logFileIco { color: #b98cd9; }
+.logFile.tOther .logFileIco { color: #92929b; }
+.logMore { font-size: 10.5px; color: var(--text-3); padding-left: 19px; margin-top: 2px; }
 .logFail { color: var(--danger); font-weight: 600; }
-.logErr { font-size: 10.5px; color: #e8968f; padding-left: 10px; line-height: 1.5; }
-/* The raw per-bin reply. Monospace and wrapping, because a path with a stray
-   character is the usual culprit and it has to be readable exactly. */
+.logErr {
+    display: flex; align-items: flex-start; gap: 6px;
+    font-size: 11px; color: #e8968f; line-height: 1.45; margin-bottom: 7px;
+}
+.logErr svg { width: 13px; height: 13px; flex: none; margin-top: 1px; }
+
+/* Bins that came back empty. One sentence each, and when there are several,
+   one line that opens them — eighteen of these is what made the old view
+   unreadable. */
+.logQuiet { margin-top: 2px; }
+.logWhy { font-size: 11px; color: var(--text-3); line-height: 1.5; padding: 1px 0; }
+.logWhy b { color: var(--text-2); font-weight: 600; }
+.logWhyMore {
+    display: flex; align-items: center; gap: 5px; padding: 3px 0;
+    background: none; border: none; color: var(--text-3);
+    font-family: inherit; font-size: 11px; cursor: pointer;
+}
+.logWhyMore:hover { color: var(--text); }
+.logWhyMore::after { content: "show why"; color: var(--accent); font-size: 10px; }
+.logQuiet.open .logWhyMore::after { content: "hide"; }
+.logWhyList { display: none; padding-left: 2px; }
+.logQuiet.open .logWhyList { display: block; }
+
+/* The raw per-bin reply, behind the Details button. Monospace and wrapping,
+   because a path with a stray character is the usual culprit and it has to be
+   readable exactly. */
 .logTrace {
     font-family: ui-monospace, Menlo, monospace; font-size: 9.5px;
-    color: var(--text-3); padding-left: 10px; line-height: 1.5;
-    word-break: break-all;
+    color: var(--text-3); padding-left: 4px; line-height: 1.5;
+    word-break: break-all; margin-top: 3px;
 }
-.logEmpty { padding: 28px 12px; text-align: center; color: var(--text-3); font-size: 11px; line-height: 1.6; }
+.navBtn.on { color: var(--accent); background: rgba(45, 140, 235, 0.14); }
+.logEmpty { padding: 34px 14px; text-align: center; color: var(--text-2); font-size: 12.5px; line-height: 1.6; }
+.logEmpty b { color: #f0f0f4; }
+.logEmptySub { display: block; margin-top: 6px; font-size: 11px; color: var(--text-3); }
 
 /* --- hover explanations ---
    CEF's native tooltip takes about a second to appear, cannot be styled, and

@@ -11,7 +11,7 @@
  *                     "create bins" step — importing always had to make them.
  *
  * Reusable "presets" (structure + colors, no links) live in "aip_presets" and
- * are built/applied from the Preset builder (gear ▸ Customize presets…).
+ * are built/applied from the Preset builder (gear > Customize presets…).
  *
  * A node's bin PATH = the chain of names from root to node, tab-joined
  * ("Footage\tKling"). That feeds jsx/host.jsx.
@@ -22,7 +22,7 @@ var cs = new CSInterface();
 // Bump this AND ExtensionBundleVersion in CSXS/manifest.xml together — the
 // shareable-zip script fails the build if the two ever disagree, because
 // "which version are you on?" has to have one answer.
-var VERSION = "1.3.8";
+var VERSION = "1.3.9";
 
 /*
  * What Import picks up. A format missing from here is skipped in silence — the
@@ -89,6 +89,10 @@ var ICON_CHEV =
 var ICON_FOLDER_FILLED =
     '<svg viewBox="0 0 24 24" fill="currentColor">' +
     '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+// A short list with a downward arrow: what came IN here, in order.
+var ICON_LOG =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M4 6h9M4 11h9M4 16h5"/><path d="M18 8v8"/><path d="M15 13l3 3 3-3"/></svg>';
 var ICON_GRIP =
     '<svg viewBox="0 0 10 16" fill="currentColor">' +
     '<circle cx="3" cy="4" r="1.1"/><circle cx="7" cy="4" r="1.1"/>' +
@@ -98,12 +102,12 @@ var ICON_GRIP =
 // All 16 Premiere label colours. `idx` is the 0-based Premiere label index and is
 // the ONLY part the project sees — `hex` just tints the panel.
 //
-// Listed in Premiere's own Preferences ▸ Labels order so the palette on screen
+// Listed in Premiere's own Preferences > Labels order so the palette on screen
 // reads like the list you already know. The eight that were here before keep
 // their exact indices, so bins already coloured don't shift.
 //
 // ⚠️ Adobe has reordered this list between versions. If a colour comes out wrong
-// in Premiere, fix `idx` here — check Edit ▸ Preferences ▸ Labels, counting from 0.
+// in Premiere, fix `idx` here — check Edit > Preferences > Labels, counting from 0.
 var PALETTE = [
     { hex: "#a884d8", name: "Violet", idx: 0 },
     { hex: "#8b7cd9", name: "Iris", idx: 1 },
@@ -245,7 +249,7 @@ function binTabNote() {
     if (binOpenPref <= 0) return "";
     return " (Bins open in a " + (binOpenPref === 2 ? "new window" : "new tab") +
         " — a bin tab can’t be jumped to. Alt-double-click a bin, or set" +
-        " Settings ▸ General ▸ Bins ▸ Double-click to Open in Place.)";
+        " Settings > General > Bins > Double-click to Open in Place.)";
 }
 
 // Tint helpers: pinned tiles and row rails are drawn from the bin's own colour.
@@ -484,6 +488,37 @@ function watchPanelWidth() {
 }
 function expandTree() { localStorage.setItem(COLLAPSE_KEY, "0"); applyCollapsed(); }
 
+/* ---------- telling a bin from a sub-bin at a glance ----------
+ *
+ * Before this, the only difference between the two was 16px of indent and one
+ * step of font weight — less than the row's own padding, so at a glance they
+ * read as one flat list. Three cues carry it now: a top-level bin is set like a
+ * heading, its folder icon is filled where a sub-bin's is outline, and the
+ * indent is wide enough for the guide line to be seen.
+ *
+ * Deliberately no colour. Colour already means two things in this tree — the
+ * left rail says a bin is linked, and the icon tint is its Premiere label — and
+ * a third meaning would break both.
+ *
+ * Behind a switch because it is a matter of taste, and a taste change with no
+ * way back is one someone has to live with.
+ */
+var DEPTH_KEY = "aip_depthCues";
+function depthCuesOn() { return localStorage.getItem(DEPTH_KEY) !== "0"; }
+function setDepthCues(on) {
+    localStorage.setItem(DEPTH_KEY, on ? "1" : "0");
+    applyDepthCues();
+    if (treeData) renderTree();
+}
+function applyDepthCues() {
+    document.body.classList.toggle("depthCues", depthCuesOn());
+    var el = document.getElementById("giDepthLabel");
+    if (el) el.textContent = depthCuesOn() ? "Bin levels: clearer" : "Bin levels: flat";
+}
+// The indent is a number, not a style, so it cannot live in the stylesheet.
+var INDENT_CUED = 22;
+function indentPx() { return depthCuesOn() ? INDENT_CUED : INDENT; }
+
 // ---------- fold every bin at once ----------
 // node.open is per-bin and already saved with the tree, so this is only those
 // flags set in one pass. Deliberately NOT an undo step: nothing is lost, and
@@ -535,6 +570,7 @@ function renderAll() {
     renderPinned();
     renderTree();
     applyCollapsed();
+    applyDepthCues();
     syncContentsView();
     var total = 0;
     forEachNode(function () { total++; });
@@ -1561,8 +1597,9 @@ function renderPinned() {
                 '<div class="pinTop"><span class="pinIco">' + ICON_FOLDER_FILLED + '</span>' +
                 '<span class="pinName">' + esc(node.name) + '</span></div>' +
                 '<div class="pinSub">' + esc(sub) + '</div>' +
-                (fresh ? '<span class="newBadge" data-tip="' +
-                    freshTip(node, binPathOf(node), true).replace(/"/g, "&quot;") +
+                (fresh ? '<span class="newBadge clickable" data-tip="' +
+                    (freshTip(node, binPathOf(node), true) +
+                     "<i>Click for everything ever imported here.</i>").replace(/"/g, "&quot;") +
                     '">+' + fresh + '</span>' : '');
             if (fresh) tile.classList.add("hasNew");
             if (tileGone) tile.classList.add("linkGone");
@@ -1593,9 +1630,18 @@ function renderPinned() {
             });
             tile.addEventListener("mousedown", function (e) {
                 if (e.button !== 0) return;
-                if (e.target && e.target.closest && e.target.closest(".tileMenu")) return;
+                if (e.target && e.target.closest &&
+                    (e.target.closest(".tileMenu") || e.target.closest(".newBadge"))) return;
                 e.preventDefault();
                 startTileDrag(node, tile, e);
+            });
+            // Same as on a row: the +N opens what landed here, rather than
+            // revealing the bin like the rest of the tile.
+            var tileBadge = tile.querySelector(".newBadge");
+            if (tileBadge) tileBadge.addEventListener("click", function (e) {
+                e.stopPropagation();
+                e.preventDefault();
+                openLogFor(binPathOf(node));
             });
             // drop files here → copy into the bin's folder, then auto-import
             tile.addEventListener("dragover", function (e) { e.preventDefault(); tile.classList.add("fileOver"); });
@@ -1619,7 +1665,7 @@ function renderPinned() {
 //  visible rows, their DOM elements, and the gaps (gapEls[i] precedes
 //  flatRows[i], so there is always one more gap than row).
 // ====================================================================
-var INDENT = 16;
+var INDENT = 16;            // the flat indent; indentPx() picks between this and 22
 var flatRows = [];
 var rowEls = [];
 var gapEls = [];
@@ -2035,7 +2081,7 @@ function showDropTarget(t, mode, name, count, bad) {
     if (!g) return;
     if (bad) {
         g.querySelector(".tgLabel").textContent = "Can’t move “" + name + "” inside itself";
-        g.querySelector(".tgapGhost").style.marginLeft = (t.depth * INDENT) + "px";
+        g.querySelector(".tgapGhost").style.marginLeft = (t.depth * indentPx()) + "px";
         g.classList.add("open", "bad");
         return;
     }
@@ -2050,7 +2096,7 @@ function showDropTarget(t, mode, name, count, bad) {
         text = count > 1 ? count + " new bins " + where : "New bin " + where;
     }
     g.querySelector(".tgLabel").textContent = text;
-    g.querySelector(".tgapGhost").style.marginLeft = (t.depth * INDENT) + "px";
+    g.querySelector(".tgapGhost").style.marginLeft = (t.depth * indentPx()) + "px";
     g.classList.add("open");
 }
 
@@ -2120,7 +2166,7 @@ function makeRow(entry) {
             row.className = "trow" + (hasFolder ? " linked" : " unlinked") +
                 (dupNodes.indexOf(node) >= 0 ? " dupName" : "") +
                 (isSelected(node) ? " selected" : "");
-            row.style.marginLeft = (depth * INDENT) + "px";
+            row.style.marginLeft = (depth * indentPx()) + "px";
             // depth as an attribute, so the tree guide lines can be pure CSS
             row.setAttribute("data-depth", depth);
             // a linked bin gets a 2px rail in its own colour (grey if uncoloured)
@@ -2142,17 +2188,26 @@ function makeRow(entry) {
             var chip = hasFolder
                 ? (gone
                     ? '<span class="tchip gone" data-tip="<b>This folder is missing</b>' + esc(node.folder) +
-                      '<i>Import cannot bring anything in until it points somewhere that exists. Right-click ▸ Link…</i>">' +
+                      '<i>Import cannot bring anything in until it points somewhere that exists. Right-click > Link…</i>">' +
                       esc(folderLeaf(node.folder)) + '</span>'
                     : '<span class="tchip" data-tip="Linked to <b>' + esc(node.folder) + '</b>Import pulls new files from here into this bin.<i>Click to open it in Finder.</i>">' + esc(folderLeaf(node.folder)) + '</span>')
                 : (unset
-                    ? '<span class="tnolink warn" data-tip="<b>No folder linked</b>This bin has nothing to import from and no sub-bins.<i>Drag a folder onto it, or right-click ▸ Link…</i>">not linked</span>'
+                    ? '<span class="tnolink warn" data-tip="<b>No folder linked</b>This bin has nothing to import from and no sub-bins.<i>Drag a folder onto it, or right-click > Link…</i>">not linked</span>'
                     : (depth > 0 ? '<span class="tnolink">not linked</span>' : ''));
             var pinDot = node.pinned ? '<span class="pinDot" data-tip="Pinned"></span>' : '';
             var freshN = freshRollup(node, binPathOf(node), false);
-            var freshBadge = freshN ? '<span class="newBadge" data-tip="' +
-                freshTip(node, binPathOf(node), false).replace(/"/g, "&quot;") +
+            var freshBadge = freshN ? '<span class="newBadge clickable" data-tip="' +
+                (freshTip(node, binPathOf(node), false) +
+                 "<i>Click for everything ever imported here.</i>").replace(/"/g, "&quot;") +
                 '">+' + freshN + '</span>' : '';
+            /* Only on bins the log has something to say about. On every row it
+             * would be twenty identical icons, nineteen of them dead ends. A bin
+             * that imported zero counts as something to say — that is the case
+             * worth opening. */
+            var logBtn = (freshN || logHasHistory(np0))
+                ? '<button class="tlog" data-tip="What has been imported into this bin.' +
+                  '<i>Every run, newest first — including runs that brought nothing in.</i>">' + ICON_LOG + '</button>'
+                : '';
             var pinLabel = node.pinned ? "Unpin" : "Pin";
             var pinAct = node.pinned ? "unpin" : "pin";
 
@@ -2163,10 +2218,13 @@ function makeRow(entry) {
             row.innerHTML =
                 '<span class="tgrip" data-tip="Drag to reorder or re-nest.<i>Drag it up into PINNED to pin it.</i>">' + ICON_GRIP + '</span>' +
                 chev +
-                '<span class="ticon">' + ICON_FOLDER + '</span>' +
+                // Filled on top, outline below: shape reads faster than size.
+                '<span class="ticon">' +
+                    ((depthCuesOn() && depth === 0) ? ICON_FOLDER_FILLED : ICON_FOLDER) +
+                '</span>' +
                 '<span class="tname"></span>' +
                 '<span class="tspacer"></span>' +
-                freshBadge + chip + pinDot +
+                freshBadge + logBtn + chip + pinDot +
                 '<div class="rowMenu">' + menuHTML(acts, node.name) + '</div>';
             if (freshN) row.classList.add("hasNew");
             if (gone) row.classList.add("linkGone");
@@ -2223,21 +2281,38 @@ function makeRow(entry) {
             if (node.color) ticon.style.color = node.color;
 
             // The whole row is the drag handle. The chevron folds, the chip opens
-            // Finder and the palette has its own clicks, so those keep their jobs.
+            // Finder, the log button and the +N open the import log, and the
+            // palette has its own clicks — so those all keep their jobs. Listed
+            // once, because a target missing from the mousedown list starts a
+            // drag under the click and the click never lands.
+            function rowOwnsClick(t) {
+                return !!(t && t.closest && (t.closest(".tchev") || t.closest(".tchip") ||
+                    t.closest(".tileMenu") || t.closest(".tlog") || t.closest(".newBadge")));
+            }
             row.addEventListener("click", function (e) {
                 var t = e.target;
-                if (t && t.closest && (t.closest(".tchev") || t.closest(".tchip") || t.closest(".tileMenu"))) return;
+                if (rowOwnsClick(t)) return;
                 if (t && t.tagName === "INPUT") return;
                 handleRowClick(node, e);
             });
             row.addEventListener("mousedown", function (e) {
                 if (e.button !== 0) return;
                 var t = e.target;
-                if (t && t.closest && (t.closest(".tchev") || t.closest(".tchip") || t.closest(".tileMenu"))) return;
+                if (rowOwnsClick(t)) return;
                 if (t && t.tagName === "INPUT") return;      // mid-rename
                 e.preventDefault();
                 startPinDrag(node, e, row);
             });
+
+            // Both open the same thing: everything ever imported into this bin.
+            var logTargets = row.querySelectorAll(".tlog, .newBadge");
+            for (var lt = 0; lt < logTargets.length; lt++) {
+                logTargets[lt].addEventListener("click", function (e) {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    openLogFor(binPathOf(node));
+                });
+            }
 
             var dot = row.querySelector(".pinDot");
             if (dot && node.color) dot.style.background = node.color;
@@ -3094,7 +3169,10 @@ function runImports(jobs, madeBit) {
                         for (var f2 = 0; f2 < list.length && keep.length < LOG_FILES_MAX; f2++) {
                             if (list[f2] !== "") keep.push(list[f2]);
                         }
-                        got.push({ bin: j.bin, n: n, files: keep });
+                        // The folder is recorded alongside the names so the log
+                        // can show where they came from without falling back to
+                        // parsing it out of the raw trace line.
+                        got.push({ bin: j.bin, n: n, files: keep, folder: j.folder });
                         freshCounts[j.bin] = (freshCounts[j.bin] || 0) + n;
                         freshFiles[j.bin] = (freshFiles[j.bin] || []).concat(keep);
                     }
@@ -3383,55 +3461,275 @@ function fmtWhen(iso) {
     return two(d.getDate()) + "/" + two(d.getMonth() + 1) + " " + time;
 }
 
+/* ---------- the log, for one bin or for all of them ----------
+ *
+ * One view, filtered — rather than a second one to keep in step. The filter is
+ * worth most on a bin that imported NOTHING: that run records a trace line and
+ * no files, which is precisely the case that cannot be diagnosed from the main
+ * panel. So a bin with no files but a trace still gets a row here.
+ *
+ * Matching on the bin path covers the bin and everything nested under it, the
+ * same way the +N badge rolls up. Errors and traces carry only the bin's LEAF
+ * name, because that is all host.jsx sends back — so those are matched by leaf,
+ * gathered from the tree so a sub-bin that imported nothing is still included.
+ */
+var logFilterBin = null;         // array of bin names, or null for everything
+
+function logFilterLeaves() {
+    var set = {};
+    if (!logFilterBin || !logFilterBin.length) return set;
+    set[logFilterBin[logFilterBin.length - 1]] = 1;
+    var node = nodeAtBinPath(logFilterBin);
+    if (node) (function rec(n) {
+        if (!n.children) return;
+        for (var i = 0; i < n.children.length; i++) { set[n.children[i].name] = 1; rec(n.children[i]); }
+    })(node);
+    return set;
+}
+function logBinMatches(binPath) {
+    if (!logFilterBin || !logFilterBin.length) return true;
+    var want = logFilterBin.join("\t");
+    return binPath === want || binPath.indexOf(want + "\t") === 0;
+}
+function logLineLeaf(line) {
+    var s = String(line);
+    var a = s.indexOf(": "), b = s.indexOf(" ← ");
+    if (b >= 0 && (a < 0 || b < a)) return s.substring(0, b);
+    if (a >= 0) return s.substring(0, a);
+    return "";
+}
+/* What one run looks like through the filter: the bins that match, plus the
+ * error and trace lines about them. Returns null when the run has nothing to
+ * say about this bin, so the run is dropped entirely. */
+function logRunView(run) {
+    var bins = run.bins || [], errors = run.errors || [], trace = run.trace || [];
+    if (!logFilterBin || !logFilterBin.length) {
+        return { at: run.at, total: run.total || 0, bins: bins, errors: errors, trace: trace };
+    }
+    var leaves = logFilterLeaves(), keptBins = [], total = 0;
+    for (var i = 0; i < bins.length; i++) {
+        if (!logBinMatches(String(bins[i].bin || ""))) continue;
+        keptBins.push(bins[i]);
+        total += bins[i].n || 0;
+    }
+    var keptErr = [], keptTr = [];
+    for (var e = 0; e < errors.length; e++) if (leaves[logLineLeaf(errors[e])]) keptErr.push(errors[e]);
+    for (var t = 0; t < trace.length; t++) if (leaves[logLineLeaf(trace[t])]) keptTr.push(trace[t]);
+    if (!keptBins.length && !keptErr.length && !keptTr.length) return null;
+    return { at: run.at, total: total, bins: keptBins, errors: keptErr, trace: keptTr };
+}
+function logHasHistory(np) {
+    if (!np || !np.length) return false;
+    var was = logFilterBin;
+    logFilterBin = np;
+    var log = loadLog(), hit = false;
+    for (var i = 0; i < log.length && !hit; i++) if (logRunView(log[i] || {})) hit = true;
+    logFilterBin = was;
+    return hit;
+}
+
+/* What a run brought in, in plain language.
+ *
+ * The raw per-bin reply — "1x \u2190 /a/b/1x  \u2192  0 \u00b7 seen=4 skipped-type=1" — is the
+ * right thing to keep and the wrong thing to lead with. Eighteen of those lines
+ * is a wall of text where a sentence would do, which is exactly what Bom saw.
+ * So the log shows the files and the folder they came from, and turns a run that
+ * brought nothing in into one sentence. The raw lines stay, behind Details.
+ */
+var logShowDetail = false;
+
+function logTraceParts(line) {
+    var s = String(line);
+    var arrow = s.indexOf(" \u2190 "), res = s.indexOf("  \u2192  ");
+    if (arrow < 0) return null;
+    return {
+        leaf: s.substring(0, arrow),
+        folder: res > arrow ? s.substring(arrow + 3, res) : s.substring(arrow + 3),
+        result: res > arrow ? s.substring(res + 5) : ""
+    };
+}
+/* Why a bin ended up with nothing. Premiere reports what it saw and what it
+ * rejected on file type; anything seen, not rejected and not imported was
+ * already in the bin, which is the usual and entirely fine answer. */
+function logWhyNothing(result) {
+    var r = String(result || "");
+    var seen = /seen=(\d+)/.exec(r), skip = /skipped-type=(\d+)/.exec(r);
+    if (!seen) return "";
+    var n = parseInt(seen[1], 10), st = skip ? parseInt(skip[1], 10) : 0;
+    if (!n) return "the folder was empty";
+    if (st >= n) return n + (n === 1 ? " file, but it is not" : " files, but none are") +
+        " a type Premiere imports";
+    var dup = n - st;
+    return dup + (dup === 1 ? " file was" : " files were") + " already in this bin" +
+        (st ? ", and " + st + (st === 1 ? " is not a type" : " are not types") + " Premiere imports" : "");
+}
+/* Extension \u2192 the same four colours the contents list uses, so a clip looks the
+ * same wherever it is named. */
+function logFileType(name) {
+    var dot = String(name).lastIndexOf(".");
+    if (dot < 0) return "Other";
+    var ext = String(name).substring(dot + 1).toUpperCase();
+    if (C_AUDIO.indexOf(ext) >= 0) return "Audio";
+    if (C_IMAGE.indexOf(ext) >= 0) return "Image";
+    if (C_VIDEO.indexOf(ext) >= 0) return "Video";
+    return "Other";
+}
+function logFileIcon(t) {
+    return t === "Audio" ? C_ICONS.audio : t === "Image" ? C_ICONS.img : C_ICONS.film;
+}
+/* Long paths are read from the end — the folder that matters is the last two or
+ * three segments, not /Users/name/Desktop/... */
+function shortFolder(folder) {
+    var parts = String(folder || "").split("/");
+    var keep = [];
+    for (var i = parts.length - 1; i >= 0 && keep.length < 3; i--) if (parts[i] !== "") keep.unshift(parts[i]);
+    if (!keep.length) return String(folder || "");
+    return (keep.length < parts.length - 1 ? "\u2026/" : "/") + keep.join("/");
+}
+
 function renderLog() {
     var host = document.getElementById("logList");
     if (!host) return;
-    var log = loadLog();
+    syncLogHead();
+    var raw = loadLog(), log = [];
+    for (var r = 0; r < raw.length; r++) {
+        var v = logRunView(raw[r] || {});
+        if (v) log.push(v);
+    }
     if (!log.length) {
-        host.innerHTML = '<div class="logEmpty">Nothing imported yet.<br>' +
-            '<span style="font-size:10px">Runs that bring files in are recorded here.</span></div>';
+        host.innerHTML = logFilterBin
+            ? '<div class="logEmpty">Nothing has been imported into <b>' +
+              esc(logFilterBin[logFilterBin.length - 1]) + '</b> yet.<br>' +
+              '<span class="logEmptySub">Press Import with a folder linked and it will show up here.</span></div>'
+            : '<div class="logEmpty">Nothing imported yet.<br>' +
+              '<span class="logEmptySub">Every run that brings files in is recorded here.</span></div>';
         return;
     }
     var h = "";
     for (var i = 0; i < log.length; i++) {
         var run = log[i] || {};
         var bins = run.bins || [];
-        h += '<div class="logRun">' +
-             '<div class="logWhen">' + esc(fmtWhen(run.at)) + '</div>' +
-             '<div class="logTotal">' + (run.total || 0) + " file" + ((run.total === 1) ? "" : "s") +
-             ((run.errors && run.errors.length) ? ' · <span class="logFail">' + run.errors.length + ' failed</span>' : "") +
-             '</div>';
-        // A run that failed is the one worth reading, so it is not hidden behind
-        // a hover here — this view exists to be looked at.
-        if (run.errors) for (var er = 0; er < run.errors.length; er++) {
-            h += '<div class="logErr">' + esc(run.errors[er]) + '</div>';
+        var errors = run.errors || [], trace = run.trace || [];
+
+        // Which bins came back empty, and why — from the trace, but never shown
+        // as the trace. A bin that received files is not repeated here.
+        var withFiles = {};
+        for (var w = 0; w < bins.length; w++) withFiles[String(bins[w].bin || "").split("\t").pop()] = 1;
+        var empties = [];
+        for (var t2 = 0; t2 < trace.length; t2++) {
+            var pt = logTraceParts(trace[t2]);
+            if (!pt || withFiles[pt.leaf]) continue;
+            var why = logWhyNothing(pt.result);
+            if (why) empties.push({ leaf: pt.leaf, why: why });
         }
-        if (run.trace && run.errors && run.errors.length) {
-            for (var tr = 0; tr < run.trace.length; tr++) {
-                h += '<div class="logTrace">' + esc(run.trace[tr]) + '</div>';
+
+        var nFiles = run.total || 0;
+        h += '<div class="logRun">' +
+             '<div class="logHead"><span class="logWhen">' + esc(fmtWhen(run.at)) + '</span>' +
+             '<span class="logCount' + (nFiles ? " got" : "") + '">' +
+             (nFiles ? nFiles + " new file" + (nFiles === 1 ? "" : "s") : "nothing new") +
+             '</span></div>';
+
+        if (errors.length) {
+            for (var er = 0; er < errors.length; er++) {
+                h += '<div class="logErr">' + C_ICONS.warn + '<span>' + esc(errors[er]) + '</span></div>';
             }
         }
+
         for (var b = 0; b < bins.length; b++) {
             var bin = bins[b] || {};
             var leaf = String(bin.bin || "").split("\t").pop();
-            h += '<div class="logBin"><div class="logBinName">' +
-                 '<span class="newBadge">+' + (bin.n || 0) + '</span>' + esc(leaf) + '</div>';
             var files = bin.files || [];
-            for (var f = 0; f < files.length && f < 12; f++) {
-                h += '<div class="logFile">' + esc(files[f]) + '</div>';
+            // The folder is on the entry from v1.3.9 on; older runs only have it
+            // inside the trace line, so fall back to that rather than show nothing.
+            var folder = bin.folder || "";
+            if (!folder) for (var tf = 0; tf < trace.length; tf++) {
+                var p2 = logTraceParts(trace[tf]);
+                if (p2 && p2.leaf === leaf) { folder = p2.folder; break; }
             }
-            // A run that pulled in two hundred clips should not need two hundred
-            // rows to say so; the count above already carries the number.
-            if (files.length > 12) h += '<div class="logMore">…and ' + (files.length - 12) + ' more</div>';
+            h += '<div class="logBin">' +
+                 '<div class="logBinHead">' +
+                 '<span class="logBinIco">' + C_ICONS.bin + '</span>' +
+                 '<span class="logBinName">' + esc(leaf) + '</span>' +
+                 '<span class="newBadge">+' + (bin.n || 0) + '</span></div>' +
+                 (folder ? '<div class="logFrom" data-tip="' + esc(folder).replace(/"/g, "&quot;") +
+                           '">' + esc(shortFolder(folder)) + '</div>' : '');
+            for (var f = 0; f < files.length && f < 12; f++) {
+                var ft = logFileType(files[f]);
+                h += '<div class="logFile t' + ft + '"><span class="logFileIco">' + logFileIcon(ft) +
+                     '</span><span class="logFileName">' + esc(files[f]) + '</span></div>';
+            }
+            if (files.length > 12) h += '<div class="logMore">\u2026and ' + (files.length - 12) + ' more</div>';
             else if (!files.length && bin.n) h += '<div class="logMore">(names not recorded)</div>';
             h += '</div>';
+        }
+
+        // One line for all the bins that stayed empty, opened only if asked.
+        if (empties.length) {
+            h += '<div class="logQuiet">';
+            if (empties.length === 1) {
+                h += '<div class="logWhy"><b>' + esc(empties[0].leaf) + '</b> \u2014 ' + esc(empties[0].why) + '</div>';
+            } else {
+                h += '<button class="logWhyMore" data-tip="Why each of these came back with nothing.">' +
+                     empties.length + ' bins brought nothing in</button><div class="logWhyList">';
+                for (var q = 0; q < empties.length; q++) {
+                    h += '<div class="logWhy"><b>' + esc(empties[q].leaf) + '</b> \u2014 ' + esc(empties[q].why) + '</div>';
+                }
+                h += '</div>';
+            }
+            h += '</div>';
+        }
+
+        // The exact reply, for when a sentence is not enough. Off by default.
+        if (logShowDetail && trace.length) {
+            for (var tr = 0; tr < trace.length; tr++) {
+                h += '<div class="logTrace">' + esc(trace[tr]) + '</div>';
+            }
         }
         h += '</div>';
     }
     host.innerHTML = h;
+    wireLogExpanders(host);
+}
+/* Each "N bins brought nothing in" opens its own list. Assigned rather than
+ * added, because renderLog runs again every time the view is opened. */
+function wireLogExpanders(host) {
+    var btns = host.querySelectorAll(".logWhyMore");
+    for (var i = 0; i < btns.length; i++) {
+        btns[i].onclick = function () {
+            var box = this.parentNode;
+            box.classList.toggle("open");
+        };
+    }
 }
 
-function openLog() { renderLog(); showView("log"); }
+function syncLogHead() {
+    var t = document.getElementById("logTitle"), s = document.getElementById("logSub"),
+        all = document.getElementById("logAll");
+    if (!t || !s) return;
+    var leaf = logFilterBin && logFilterBin.length ? logFilterBin[logFilterBin.length - 1] : "";
+    t.textContent = leaf ? leaf : "Import log";
+    // "/" not ">": Premiere's UI font has no glyph for it and substitutes
+    // something that reads as a mistake.
+    s.textContent = leaf
+        ? (logFilterBin.length > 1 ? logFilterBin.join(" / ") : "what came into this bin, newest first")
+        : "what came in, newest first";
+    if (all) all.style.display = leaf ? "flex" : "none";
+    var det = document.getElementById("logDetail");
+    if (det) {
+        det.classList.toggle("on", logShowDetail);
+        det.setAttribute("data-tip", logShowDetail
+            ? "Hide what Premiere reported line by line."
+            : "Show what Premiere reported line by line.<i>Only needed when the summary doesn't explain it.</i>");
+    }
+}
+function openLog() { logFilterBin = null; renderLog(); showView("log"); }
+/* The per-bin entry point: the ⟳ on a row, and the +N badge on a row or tile. */
+function openLogFor(np) {
+    logFilterBin = (np && np.length) ? np.slice() : null;
+    renderLog();
+    showView("log");
+}
 
 function isWindows() { return /win/i.test(navigator.platform || ""); }
 function modKeyName() { return isWindows() ? "Alt" : "⌘"; }
@@ -3463,8 +3761,8 @@ function revealBinPath(np, label) {
          * that said what to do. Counts and codes go to the hover box. */
         var why = binOpenPref > 0
             ? "Bins are set to open in a " + (binOpenPref === 2 ? "new window" : "new tab") +
-              ". A bin tab is not something a panel can reach — set Settings ▸ General ▸ " +
-              "Bins ▸ Double-click to Open in Place, or Alt-double-click bins."
+              ". A bin tab is not something a panel can reach — set Settings > General > " +
+              "Bins > Double-click to Open in Place, or Alt-double-click bins."
             : "";
 
         if (res.indexOf("OKVIEW:") === 0) {
@@ -3640,7 +3938,7 @@ function refreshProject(force) {
  * Runs ONLY when there is no saved tree for this project, so it can never
  * overwrite work: the moment bins are adopted, saveTree() marks the project set
  * up and this never fires for it again. Bins added in Premiere later are pulled
- * in on demand with ⚙ ▸ Read bins from project.
+ * in on demand with ⚙ > Read bins from project.
  */
 var adoptScanKey = null;        // second belt: one scan per project, ever
 function autoAdoptOrChoose(key) {
@@ -3690,7 +3988,7 @@ function showBlankChooser() {
     // so the chooser comes back next time rather than silently picking Empty.
     ov.querySelector(".chCancel").onclick = function () {
         close();
-        setStatus("Set up later from ⚙ ▸ Reload for this project.", "");
+        setStatus("Set up later from ⚙ > Reload for this project.", "");
     };
     var btns = ov.querySelectorAll(".chItem");
     for (var b = 0; b < btns.length; b++) {
@@ -4403,7 +4701,16 @@ document.addEventListener("DOMContentLoaded", function () {
         setStatus(on ? "Import will mirror subfolders into sub-bins."
                      : "Import will leave your structure alone.", "ok");
     };
+    document.getElementById("giDepth").onclick = function () {
+        closeGear();
+        var on = !depthCuesOn();
+        setDepthCues(on);
+        setStatus(on ? "Top-level bins now stand out from their sub-bins."
+                     : "Every bin drawn the same, as before.", "ok");
+    };
     document.getElementById("giLog").onclick = function () { closeGear(); openLog(); };
+    document.getElementById("logAll").onclick = function () { logFilterBin = null; renderLog(); };
+    document.getElementById("logDetail").onclick = function () { logShowDetail = !logShowDetail; renderLog(); };
     document.getElementById("logBack").onclick = function () { showView("main"); };
     document.getElementById("logClear").onclick = function () {
         confirmModal("Clear the import log?", "Only the record goes. Your files, bins and links are untouched.", "Clear", true, function (ok) {
