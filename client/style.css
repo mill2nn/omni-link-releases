@@ -72,8 +72,36 @@ input::placeholder { -webkit-text-fill-color: var(--text-3); }
 button { font-family: inherit; cursor: pointer; }
 
 /* --- header --- */
-.header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+/* Sticky: the panel scrolls as one column, so with enough pinned bins Import
+   and the gear scrolled away and the only way back was scrolling up. Needs an
+   opaque background or rows show through it; the negative margins let it span
+   the full width over .app's padding; z-index sits under .gearPop (40) so its
+   own menu still opens above it. */
+.header {
+    display: flex; flex-direction: column; align-items: stretch; gap: 9px;
+    position: sticky; top: 0; z-index: 30;
+    margin: -12px -12px 14px; padding: 12px 12px 10px;
+    background: var(--bg);
+    box-shadow: 0 6px 10px -8px rgba(0, 0, 0, 0.9);
+}
+.headerTop { display: flex; align-items: center; gap: 10px; }
 .header .htext { flex: 1; min-width: 0; }
+
+/* The four everyday actions. flex:1 shares the width evenly, min-width:0 lets a
+   label ellipsise rather than push a button out of the panel, and the labels
+   stay because four unlabelled icons in a row is four guesses. */
+.toolbar { display: flex; gap: 5px; }
+.tbBtn {
+    flex: 1; min-width: 0;
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    padding: 5px 4px; border-radius: 6px;
+    background: rgba(255, 255, 255, 0.045); border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--text-2); font-size: 10px; font-family: inherit; transition: 0.12s;
+}
+.tbBtn svg { width: 12px; height: 12px; flex: none; }
+.tbBtn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tbBtn:hover { color: #f0f0f4; background: rgba(255, 255, 255, 0.09); border-color: rgba(255, 255, 255, 0.16); }
+.tbBtn:active { transform: translateY(1px); }
 .header h1 { font-size: 12.5px; font-weight: 600; letter-spacing: 0.1px; color: #f0f0f4; }
 .projName {
     font-size: 10px; color: #8a8a93; margin-top: 1px;
@@ -502,6 +530,55 @@ button { font-family: inherit; cursor: pointer; }
     background: rgba(45, 140, 235, 0.09); color: var(--accent);
 }
 .dropZone.fileOver .dzTitle { color: var(--accent); }
+
+/* --- search --- */
+.searchRow {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 8px; margin-bottom: 12px; border-radius: 7px;
+    background: rgba(255, 255, 255, 0.045);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.searchRow:focus-within { border-color: rgba(45, 140, 235, 0.55); background: rgba(255, 255, 255, 0.06); }
+.searchIco { width: 13px; height: 13px; flex: none; color: var(--text-3); }
+#searchInput {
+    flex: 1; min-width: 0; background: transparent; border: none; outline: none;
+    color: var(--text); font-size: 11.5px; font-family: inherit; padding: 1px 0;
+}
+.searchClear {
+    flex: none; display: flex; padding: 2px; border: none; border-radius: 4px;
+    background: transparent; color: var(--text-3);
+}
+.searchClear svg { width: 12px; height: 12px; }
+.searchClear:hover { color: #f0f0f4; background: rgba(255, 255, 255, 0.08); }
+.searchCount { flex: none; font-size: 9.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+/* --- "new files" badge ---
+   Sits next to the bin so the count is read with the name, not hunted for. The
+   accent fill is the same blue as Import, because that is what put it there. */
+.newBadge {
+    flex: none; display: inline-flex; align-items: center;
+    padding: 1px 6px; border-radius: 9px;
+    background: var(--accent-2); color: #fff;
+    font-size: 9.5px; font-weight: 700; letter-spacing: 0.2px;
+}
+.trow.hasNew { background: rgba(45, 140, 235, 0.09); }
+.pinTile.hasNew { box-shadow: inset 0 0 0 1px rgba(45, 140, 235, 0.55); }
+.pinTile .newBadge { position: absolute; top: 7px; right: 7px; }
+
+/* --- import log --- */
+.logList { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+.logRun { border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 9px 10px; }
+.logWhen { font-size: 10px; color: var(--text-3); margin-bottom: 2px; }
+.logTotal { font-size: 12px; font-weight: 600; color: #f0f0f4; margin-bottom: 7px; }
+.logBin { margin-bottom: 6px; }
+.logBinName { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); margin-bottom: 3px; }
+.logBinName .newBadge { background: rgba(45, 140, 235, 0.22); color: #9fc9f5; }
+.logFile {
+    font-size: 10.5px; color: #c8c8d2; padding-left: 10px; line-height: 1.5;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.logMore { font-size: 10px; color: var(--text-3); padding-left: 10px; }
+.logEmpty { padding: 28px 12px; text-align: center; color: var(--text-3); font-size: 11px; line-height: 1.6; }
 
 /* --- hover explanations ---
    CEF's native tooltip takes about a second to appear, cannot be styled, and

@@ -22,7 +22,7 @@ var cs = new CSInterface();
 // Bump this AND ExtensionBundleVersion in CSXS/manifest.xml together — the
 // shareable-zip script fails the build if the two ever disagree, because
 // "which version are you on?" has to have one answer.
-var VERSION = "1.3.4";
+var VERSION = "1.3.5";
 
 /*
  * What Import picks up. A format missing from here is skipped in silence — the
@@ -367,6 +367,9 @@ function applyCollapsed() {
     var c = isCollapsed();
     var h = document.getElementById("treeHeader"); if (h) h.classList.toggle("collapsed", c);
     var l = document.getElementById("treeList"); if (l) l.style.display = c ? "none" : "";
+    // The search belongs to this section now, so it folds away with it — a
+    // filter box floating above a collapsed list has nothing to filter.
+    var sr = document.querySelector(".searchRow"); if (sr) sr.style.display = c ? "none" : "flex";
     var ab = document.getElementById("addBinBtn"); if (ab) ab.style.display = c ? "none" : "";
     // collapsing frees the lower half, so the shelf gets roomier tiles
     document.body.classList.toggle("treeCollapsed", c);
@@ -441,6 +444,9 @@ function renderAll() {
     renderTree();
     applyCollapsed();
     syncContentsView();
+    var total = 0;
+    forEachNode(function () { total++; });
+    syncSearchCount(flatRows.length, total);
 }
 
 /* ============================ BIN CONTENTS ============================
@@ -1430,8 +1436,9 @@ function renderPinned() {
     setTileBasis(grid, pinColsFor(pins.length, w, isCollapsed()));
 
     if (pins.length === 0) {
-        grid.innerHTML = '<div class="pinEmpty">' + ICON_PIN +
-            '<span>Nothing pinned — drag a bin up here, or right-click a bin.</span></div>';
+        grid.innerHTML = '<div class="pinEmpty">' + ICON_PIN + '<span>' +
+            "Nothing pinned — drag a bin up here, or right-click a bin." +
+            '</span></div>';
         return;
     }
 
@@ -1450,11 +1457,18 @@ function renderPinned() {
                              : "to link a folder to it") + "</i>");
 
             var sub = node.folder ? folderLeaf(node.folder) : "no folder";
+            // How many files the last Import put in here — marked until the
+            // next run, so a glance answers "did anything actually arrive".
+            var fresh = freshRollup(node, binPathOf(node), true);
             tile.innerHTML =
                 menuHTML([{ act: "unpin", label: "Unpin", icon: ICON_PIN }], node.name, true) +
                 '<div class="pinTop"><span class="pinIco">' + ICON_FOLDER_FILLED + '</span>' +
                 '<span class="pinName">' + esc(node.name) + '</span></div>' +
-                '<div class="pinSub">' + esc(sub) + '</div>';
+                '<div class="pinSub">' + esc(sub) + '</div>' +
+                (fresh ? '<span class="newBadge" data-tip="' +
+                    freshTip(node, binPathOf(node), true).replace(/"/g, "&quot;") +
+                    '">+' + fresh + '</span>' : '');
+            if (fresh) tile.classList.add("hasNew");
 
             // the whole tile carries the bin's colour — that glance is the point of pinning
             if (node.color) {
@@ -1536,6 +1550,152 @@ function computeDupNodes() {
 // Visible rows in draw order. Each entry carries `chain` — the links from
 // root down to itself, indexed by depth — which is what lets a gap resolve
 // "insert at depth 1" into a concrete array and index.
+/* ============ import log, "new" badges, and search ============ */
+
+var LOG_KEY_BASE = "aip_log::";
+var LOG_MAX = 60;                 // runs kept; a few hundred KB at the very worst
+var LOG_FILES_MAX = 400;          // names kept per run
+
+function logKey() { return LOG_KEY_BASE + (currentProjectKey || "__none__"); }
+function loadLog() {
+    try { return JSON.parse(localStorage.getItem(logKey()) || "[]"); } catch (e) { return []; }
+}
+/* One entry per Import press, newest first. Stamped when the run finishes, so
+ * the time shown is when the files were actually in, not when the button was
+ * pressed — on a big import those differ by more than a moment. */
+function appendLog(entry) {
+    var log = loadLog();
+    log.unshift(entry);
+    while (log.length > LOG_MAX) log.pop();
+    try { localStorage.setItem(logKey(), JSON.stringify(log)); } catch (e) {}
+}
+function clearLog() { try { localStorage.removeItem(logKey()); } catch (e) {} }
+
+/* Which bins just received files, and how many. Held in memory only: it marks
+ * "since the last import", which stops meaning anything once the panel reloads.
+ * Keyed by tab-joined bin path, because that is what an import job carries. */
+var freshCounts = {};
+var freshFiles = {};              // same keys — the names behind each count
+function clearFresh() { freshCounts = {}; freshFiles = {}; }
+function freshFor(np) { return np ? (freshCounts[np.join("\t")] || 0) : 0; }
+/* What to show on ONE row.
+ *
+ * A collapsed bin hides its children, so a badge sitting on a hidden sub-bin is
+ * a badge nobody sees — which is the whole point of the badge. A folded bin
+ * therefore carries the total from everything beneath it; an open one shows
+ * only its own, because its children are on screen carrying theirs.
+ *
+ * Pinned tiles always roll up: a tile has no folded state, and "Footage" should
+ * account for everything that landed under it.
+ */
+/* The names behind a badge, gathered the same way its number is — so a folded
+ * parent showing "+5" lists all five, and an open bin lists only its own. A
+ * count tells you something arrived; this tells you what. */
+function freshNames(node, np, alwaysRollUp) {
+    var out = (freshFiles[(np || []).join("\t")] || []).slice();
+    if (alwaysRollUp || node.open === false) {
+        (function rec(n, prefix) {
+            if (!n.children) return;
+            for (var i = 0; i < n.children.length; i++) {
+                var cp = prefix.concat([n.children[i].name]);
+                out = out.concat(freshFiles[cp.join("\t")] || []);
+                rec(n.children[i], cp);
+            }
+        })(node, np || []);
+    }
+    return out;
+}
+function freshTip(node, np, alwaysRollUp) {
+    var names = freshNames(node, np, alwaysRollUp);
+    if (!names.length) return "";
+    var shown = names.slice(0, 10);
+    var body = "";
+    for (var i = 0; i < shown.length; i++) body += esc(shown[i]) + "<br>";
+    if (names.length > shown.length) body += "<i>…and " + (names.length - shown.length) + " more</i>";
+    return "<b>" + names.length + " new file" + (names.length === 1 ? "" : "s") + "</b>" + body;
+}
+
+function freshRollup(node, np, alwaysRollUp) {
+    var sum = freshFor(np);
+    if (!alwaysRollUp && node.open !== false) return sum;
+    (function rec(n, prefix) {
+        if (!n.children) return;
+        for (var i = 0; i < n.children.length; i++) {
+            var cp = prefix.concat([n.children[i].name]);
+            sum += freshFor(cp);
+            rec(n.children[i], cp);
+        }
+    })(node, np || []);
+    return sum;
+}
+
+/* ---- search ---- */
+function wireSearch() {
+    var inp = document.getElementById("searchInput");
+    var clr = document.getElementById("searchClear");
+    if (!inp || inp.__wired) return;
+    inp.__wired = true;
+    var list = document.getElementById("treeList");
+    /* Typing must not move the panel under you.
+     *
+     * Filtering makes the list shorter, the page shorter with it, and the
+     * browser then clamps scrollTop — so the whole panel lurches upward while
+     * you are mid-word, and the box you are typing into can leave the screen.
+     *
+     * Holding the list at the height it had when the search began keeps the
+     * page the same length however few rows survive, so there is nothing for
+     * the browser to clamp. The floor is released the moment the box is empty.
+     * scrollTop is restored as well, for the cases the floor cannot cover —
+     * the results growing past it, or the section being folded.
+     */
+    var heldHeight = 0;
+    function apply() {
+        var se = document.scrollingElement || document.documentElement;
+        var y = se ? se.scrollTop : 0;
+        var was = searchTerm;
+        searchTerm = inp.value.replace(/^\s+|\s+$/g, "").toLowerCase();
+
+        if (!was && searchTerm && list) heldHeight = list.offsetHeight;
+        if (!searchTerm) heldHeight = 0;
+
+        clr.style.display = searchTerm ? "flex" : "none";
+        renderAll();
+
+        if (list) list.style.minHeight = heldHeight ? (heldHeight + "px") : "";
+        if (se) se.scrollTop = y;
+    }
+    inp.addEventListener("input", apply);
+    inp.addEventListener("keydown", function (e) {
+        // Escape clears rather than just blurring: a filter left on after you
+        // have stopped looking is a panel that appears to have lost your bins.
+        if (e.key === "Escape") { e.preventDefault(); inp.value = ""; apply(); inp.blur(); }
+    });
+    clr.addEventListener("click", function () { inp.value = ""; apply(); inp.focus(); });
+}
+function syncSearchCount(shownBins, totalBins) {
+    var el = document.getElementById("searchCount");
+    if (!el) return;
+    el.textContent = searchTerm ? (shownBins + " of " + totalBins) : "";
+}
+
+
+var searchTerm = "";
+function matchesSearch(name) {
+    if (!searchTerm) return true;
+    return String(name).toLowerCase().indexOf(searchTerm) >= 0;
+}
+/* A node survives the filter if it matches, or if anything beneath it does —
+ * otherwise searching for a sub-bin would hide the parents and leave the result
+ * floating at the wrong indent, which reads as the wrong bin entirely. */
+function subtreeMatches(node) {
+    if (matchesSearch(node.name)) return true;
+    if (!node.children) return false;
+    for (var i = 0; i < node.children.length; i++) {
+        if (subtreeMatches(node.children[i])) return true;
+    }
+    return false;
+}
+
 /* ---- bin structure order ----
  *
  * Display only. Every row still carries the REAL array and the REAL index it
@@ -1604,17 +1764,25 @@ function colorRank(hex) {
 
 function flattenVisible() {
     var out = [], mode = treeSort();
-    (function walk(arr, depth, chain) {
+    /* `under` means an ancestor already matched, so everything below it is part
+     * of the result: finding a bin should hand you the bin AND its contents,
+     * not the bin with its sub-bins mysteriously filtered out of it. */
+    (function walk(arr, depth, chain, under) {
         var ord = orderedChildren(arr, mode);
         for (var k = 0; k < ord.length; k++) {
             var node = ord[k].node, i = ord[k].idx;    // i is the position in arr, not on screen
+            var hit = under || (searchTerm ? matchesSearch(node.name) : false);
+            if (searchTerm && !hit && !subtreeMatches(node)) continue;
+            // While filtering, a bin with a match inside is forced open — the
+            // point of a search is to show you the hit, not where it is hidden.
+            var forceOpen = searchTerm && node.children && node.children.length;
             var myChain = chain.concat([{ node: node, arr: arr, idx: i }]);
             out.push({ node: node, depth: depth, arr: arr, idx: i, chain: myChain });
-            if (node.children && node.children.length && node.open !== false) {
-                walk(node.children, depth + 1, myChain);
+            if (node.children && node.children.length && (forceOpen || node.open !== false)) {
+                walk(node.children, depth + 1, myChain, hit);
             }
         }
-    })(treeData, 0, []);
+    })(treeData, 0, [], false);
     return out;
 }
 
@@ -1652,37 +1820,24 @@ function materialize(res) {
 // row that opened it. Live rects are safe here: opening a gap only ever moves
 // rows *below* the cursor, so the zone the cursor sits in can grow but never
 // slide out from under it.
-/* How much of a row's top and bottom counts as "the gap above/below" rather
- * than the row itself, when a folder is dragged in from Finder.
+/* Which gap the cursor is nearest, for a folder dragged in from Finder.
  *
- * This used to be 30% of the row height, capped at 11px. On a 36px row that is
- * 10.8px at each end, so with the 11px gap element between rows the drop zones
- * worked out at ~33px of "make a new bin" against ~14px of "link to this bin" —
- * a folder aimed at a bin landed as a new bin about seventy percent of the
- * time, which read as "linking is broken".
- *
- * Linking a folder to a bin is the common intent; making new bins from a drop
- * is mostly a first-run thing and the big empty-state drop zone already covers
- * it. So the row takes the majority and the gap keeps a comfortable 4px each
- * side, still ~19px of target with the gap element included.
+ * Rows hit-test themselves now (see makeRow), so this is only reached when the
+ * cursor is between rows or past the last one. That removes the band arithmetic
+ * this used to need — measuring how much of a row counted as "the gap beside
+ * it" was guesswork, and it guessed wrong often enough that dropping a folder
+ * on a bin made a new bin instead of linking it.
  */
-function gapBand(h) { return Math.max(3, Math.min(4, h * 0.12)); }
-
-function pointerTarget(x, y) {
+function nearestGap(x, y) {
     if (!rowEls.length) return gapTarget(0, x);
     for (var i = 0; i < rowEls.length; i++) {
         var r = rowEls[i].getBoundingClientRect();
-        if (y < r.top) return gapTarget(i, x);          // in the gap above this row
-        if (y <= r.bottom) {
-            var band = gapBand(r.height);
-            if (y < r.top + band) return gapTarget(i, x);
-            if (y > r.bottom - band) return gapTarget(i + 1, x);
-            dragAnchor = null;                          // over a row: next gap starts fresh
-            return { kind: "row", index: i };
-        }
+        if (y < r.top) return gapTarget(i, x);
+        if (y <= r.bottom) return gapTarget(i + (y > (r.top + r.bottom) / 2 ? 1 : 0), x);
     }
     return gapTarget(rowEls.length, x);
 }
+
 // The level starts at whatever is most likely — the level of the bin above the
 // gap — and only changes if the cursor is deliberately dragged sideways. Absolute
 // cursor X used to decide it, which made the level feel random on arrival.
@@ -1832,7 +1987,11 @@ function makeRow(entry) {
             var chip = hasFolder
                 ? '<span class="tchip" data-tip="Linked to <b>' + esc(node.folder) + '</b>Import pulls new files from here into this bin.<i>Click to open it in Finder.</i>">' + esc(folderLeaf(node.folder)) + '</span>'
                 : (depth > 0 ? '<span class="tnolink">not linked</span>' : '');
-            var pinDot = node.pinned ? '<span class="pinDot" title="Pinned"></span>' : '';
+            var pinDot = node.pinned ? '<span class="pinDot" data-tip="Pinned"></span>' : '';
+            var freshN = freshRollup(node, binPathOf(node), false);
+            var freshBadge = freshN ? '<span class="newBadge" data-tip="' +
+                freshTip(node, binPathOf(node), false).replace(/"/g, "&quot;") +
+                '">+' + freshN + '</span>' : '';
             var pinLabel = node.pinned ? "Unpin" : "Pin";
             var pinAct = node.pinned ? "unpin" : "pin";
 
@@ -1843,11 +2002,50 @@ function makeRow(entry) {
             row.innerHTML =
                 '<span class="tgrip" data-tip="Drag to reorder or re-nest.<i>Drag it up into PINNED to pin it.</i>">' + ICON_GRIP + '</span>' +
                 chev +
-                '<span class="ticon" title="Drag to reorder, or up to Pinned to pin this bin">' + ICON_FOLDER + '</span>' +
+                '<span class="ticon">' + ICON_FOLDER + '</span>' +
                 '<span class="tname"></span>' +
                 '<span class="tspacer"></span>' +
-                chip + pinDot +
+                freshBadge + chip + pinDot +
                 '<div class="rowMenu">' + menuHTML(acts, node.name) + '</div>';
+            if (freshN) row.classList.add("hasNew");
+
+            /* The row hit-tests itself for a folder dragged in from Finder.
+             *
+             * This used to be arithmetic: the host measured the cursor against
+             * cached rectangles and decided whether it was over a row or in the
+             * gap beside it. Getting that split right by hand is guesswork, and
+             * it guessed wrong often enough that linking a bin looked broken.
+             * The browser already knows what is under the cursor — so the whole
+             * row is "link to this bin", the dashed line between rows (which is
+             * pointer-transparent, so the event reaches the host) is "insert
+             * here", and there is no band to tune.
+             *
+             * Internal bin reordering is mouse-based, not HTML5 drag, so none of
+             * this can reach it.
+             */
+            row.addEventListener("dragover", function (e) {
+                e.preventDefault();
+                e.stopPropagation();          // the host must not overrule with a gap
+                var n = (e.dataTransfer && e.dataTransfer.items) ? e.dataTransfer.items.length : 1;
+                showDropTarget({ kind: "row", index: rowEls.indexOf(row) }, "new", "", n);
+            });
+            row.addEventListener("dragleave", function (e) {
+                if (e.relatedTarget && row.contains(e.relatedTarget)) return;
+                clearDropTarget();
+            });
+            row.addEventListener("drop", function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                clearDropTarget();
+                var paths = filePathsFromDrop(e);
+                if (!paths.length) {
+                    setStatus("Couldn’t read that folder — right-click the bin and use Link…", "error");
+                    return;
+                }
+                node.folder = ensureFolder(paths[0]);
+                saveTree(); renderAll();
+                setStatus("✓ Linked “" + folderLeaf(node.folder) + "” to " + node.name + ".", "ok");
+            });
 
             if (kids) {
                 row.querySelector(".tchev").addEventListener("click", function (e) {
@@ -2002,7 +2200,9 @@ function wireTreeDrops() {
     host.addEventListener("dragover", function (e) {
         e.preventDefault();
         var n = (e.dataTransfer && e.dataTransfer.items) ? e.dataTransfer.items.length : 1;
-        showDropTarget(pointerTarget(e.clientX, e.clientY), "new", "", n);
+        // Rows stop propagation, so reaching here means the cursor is NOT over
+        // one — between rows, or past the last. Only a gap can be meant.
+        showDropTarget(nearestGap(e.clientX, e.clientY), "new", "", n);
     });
     host.addEventListener("dragleave", function (e) {
         if (e.relatedTarget && host.contains(e.relatedTarget)) return;
@@ -2419,6 +2619,36 @@ function linkFolder(node) {
     }
 }
 
+/*
+ * Re-apply every coloured bin's label, and every clip inside it, in one call.
+ *
+ * Run before an import (so bins exist and are right) and again after (so files
+ * that just arrived carry the colour, whatever each individual import call did
+ * with it). One evalScript rather than one per bin: firing twenty concurrent
+ * ExtendScript calls at Premiere while it is importing is asking for exactly
+ * the kind of intermittent nothing-happened this project has spent days on.
+ *
+ * Only bins the panel has actually been given a colour are touched. A clip in
+ * an uncoloured bin keeps whatever label it has, so a label set by hand in
+ * Premiere is never overwritten by a bin that has no opinion.
+ */
+function recolorAll(cb) {
+    var lines = [];
+    forEachNode(function (n, np) {
+        if (!n.color) return;
+        var idx = LABEL_INDEX[n.color];
+        if (idx == null) return;
+        lines.push(np.join("\t") + "\t" + idx);
+    });
+    if (!lines.length) { if (cb) cb(0); return; }
+    cs.evalScript("aip_recolorAll(" + q(lines.join("\n")) + ")", function (res) {
+        var n = 0;
+        var m = /^OK:(\d+)\/(\d+)$/.exec(String(res == null ? "" : res));
+        if (m) n = parseInt(m[1], 10);
+        if (cb) cb(n);
+    });
+}
+
 // Push a bin's label color (and its clips') into Premiere.
 function syncBinColor(node) {
     var idx = LABEL_INDEX[node.color];
@@ -2473,7 +2703,7 @@ function importAll() {
         }
         var made = parseInt(String(res).substring(3), 10);
         var madeBit = (!isNaN(made) && made > 0) ? (made + " bin" + (made === 1 ? "" : "s") + " created · ") : "";
-        forEachNode(function (n) { if (n.color) syncBinColor(n); });
+        recolorAll();
         if (!jobs.length) {
             setStatus(madeBit ? ("✓ " + madeBit.replace(" · ", ".")) : "Bins are already there — link a folder to import files.", "ok");
             return;
@@ -2484,13 +2714,23 @@ function importAll() {
 
 function runImports(jobs, madeBit) {
     var total = 0, errors = [], i = 0;
+    var got = [];                     // { bin, files[] } for the log and the badges
+    clearFresh();
     function next() {
         if (i >= jobs.length) {
-            // report what DID import even when some bins failed
             var files = total + " new file" + (total === 1 ? "" : "s");
-            if (!errors.length) { setStatus("✓ " + madeBit + "imported " + files + ".", "ok"); return; }
-            setStatus(madeBit + (total ? "imported " + files + " · " : "") +
-                errors.length + " bin" + (errors.length === 1 ? "" : "s") + " failed — " + errors[0], "error");
+            /* Log the run before the colour pass, so a slow recolour cannot lose
+             * the record of what arrived. Only runs that brought something in:
+             * a log full of "imported 0" entries buries the ones that matter. */
+            if (total > 0) {
+                appendLog({ at: new Date().toISOString(), total: total, bins: got });
+            }
+            recolorAll(function () {
+                renderAll();          // paint the "new" badges
+                if (!errors.length) { setStatus("✓ " + madeBit + "imported " + files + ".", "ok"); return; }
+                setStatus(madeBit + (total ? "imported " + files + " · " : "") +
+                    errors.length + " bin" + (errors.length === 1 ? "" : "s") + " failed — " + errors[0], "error");
+            });
             return;
         }
         var j = jobs[i];
@@ -2499,9 +2739,25 @@ function runImports(jobs, madeBit) {
             var leaf = j.bin.split("\t").pop();
             if (res && String(res).indexOf("ERR:") === 0) errors.push(leaf + ": " + String(res).substring(4));
             else {
-                var n = parseInt(res, 10);
+                var txt = String(res == null ? "" : res);
+                var n = parseInt(txt, 10);
                 if (isNaN(n)) errors.push(leaf + ": Premiere didn’t run the import (" + (res || "no response") + ")");
-                else total += n;
+                else {
+                    total += n;
+                    if (n > 0) {
+                        // Names arrive after the field separator; an older host
+                        // that only returns a count still logs the bin and total.
+                        var cut = txt.indexOf(FIELD_SEP);
+                        var list = cut < 0 ? [] : txt.substring(cut + 1).split("\n");
+                        var keep = [];
+                        for (var f2 = 0; f2 < list.length && keep.length < LOG_FILES_MAX; f2++) {
+                            if (list[f2] !== "") keep.push(list[f2]);
+                        }
+                        got.push({ bin: j.bin, n: n, files: keep });
+                        freshCounts[j.bin] = (freshCounts[j.bin] || 0) + n;
+                        freshFiles[j.bin] = (freshFiles[j.bin] || []).concat(keep);
+                    }
+                }
             }
             i++; next();
         });
@@ -2509,9 +2765,6 @@ function runImports(jobs, madeBit) {
     next();
 }
 
-// ====================================================================
-//  drop files onto a pinned bin → copy into its folder, then import
-// ====================================================================
 function filePathsFromDrop(e) {
     var dt = e.dataTransfer, out = [];
     if (dt.files && dt.files.length) { for (var i = 0; i < dt.files.length; i++) if (dt.files[i].path) out.push(dt.files[i].path); }
@@ -2777,6 +3030,58 @@ function wireTips() {
     window.addEventListener("blur", hideTip);
 }
 
+/* ---- the import log view ---- */
+function fmtWhen(iso) {
+    var d;
+    try { d = new Date(iso); } catch (e) { return String(iso); }
+    if (!d || isNaN(d.getTime())) return String(iso);
+    function two(n) { return (n < 10 ? "0" : "") + n; }
+    var now = new Date();
+    var sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    var time = two(d.getHours()) + ":" + two(d.getMinutes());
+    // Today's imports are the ones being checked; a date on those is noise.
+    if (sameDay) return "Today " + time;
+    return two(d.getDate()) + "/" + two(d.getMonth() + 1) + " " + time;
+}
+
+function renderLog() {
+    var host = document.getElementById("logList");
+    if (!host) return;
+    var log = loadLog();
+    if (!log.length) {
+        host.innerHTML = '<div class="logEmpty">Nothing imported yet.<br>' +
+            '<span style="font-size:10px">Runs that bring files in are recorded here.</span></div>';
+        return;
+    }
+    var h = "";
+    for (var i = 0; i < log.length; i++) {
+        var run = log[i] || {};
+        var bins = run.bins || [];
+        h += '<div class="logRun">' +
+             '<div class="logWhen">' + esc(fmtWhen(run.at)) + '</div>' +
+             '<div class="logTotal">' + (run.total || 0) + " file" + ((run.total === 1) ? "" : "s") + '</div>';
+        for (var b = 0; b < bins.length; b++) {
+            var bin = bins[b] || {};
+            var leaf = String(bin.bin || "").split("\t").pop();
+            h += '<div class="logBin"><div class="logBinName">' +
+                 '<span class="newBadge">+' + (bin.n || 0) + '</span>' + esc(leaf) + '</div>';
+            var files = bin.files || [];
+            for (var f = 0; f < files.length && f < 12; f++) {
+                h += '<div class="logFile">' + esc(files[f]) + '</div>';
+            }
+            // A run that pulled in two hundred clips should not need two hundred
+            // rows to say so; the count above already carries the number.
+            if (files.length > 12) h += '<div class="logMore">…and ' + (files.length - 12) + ' more</div>';
+            else if (!files.length && bin.n) h += '<div class="logMore">(names not recorded)</div>';
+            h += '</div>';
+        }
+        h += '</div>';
+    }
+    host.innerHTML = h;
+}
+
+function openLog() { renderLog(); showView("log"); }
+
 function isWindows() { return /win/i.test(navigator.platform || ""); }
 function modKeyName() { return isWindows() ? "Alt" : "⌘"; }
 
@@ -2823,12 +3128,14 @@ function revealBinPath(np, label) {
                 (why ? " " + why : "");
 
             if (front === "0") {
-                setStatus("Go up a level in the Project panel, then click again.", "error", diag);
+                setStatus("Return to the main bin, then try again.", "error", diag);
             } else if (confirmed !== applied) {
-                // The call ran and the selection did not stick. Nothing further
-                // here helps, so say the one thing that might.
-                setStatus("Premiere didn’t take the selection — click once in the Project panel, then try again.",
-                    "error", diag);
+                /* The call ran and the selection did not stick. In practice that
+                 * means the Project panel is inside a bin, so the instruction is
+                 * the same as the front-view case — one thing to learn, not two
+                 * near-identical sentences. Which of the two it was stays in the
+                 * hover detail, where it is useful to me and out of his way. */
+                setStatus("Return to the main bin, then try again.", "error", diag);
             } else {
                 setStatus("Opened “" + node.name + "”" + (clip ? " — " + clip : ""), "ok", diag);
             }
@@ -2910,6 +3217,7 @@ function resetStructure() {
 function showView(v) {
     document.getElementById("mainView").style.display = (v === "main") ? "flex" : "none";
     document.getElementById("builderView").style.display = (v === "builder") ? "flex" : "none";
+    document.getElementById("logView").style.display = (v === "log") ? "flex" : "none";
 }
 
 function setProjectLabel(key) {
@@ -3050,56 +3358,42 @@ function stripToPreset(nodes) {
     for (var i = 0; i < nodes.length; i++) out.push({ name: nodes[i].name, color: nodes[i].color || "", children: stripToPreset(nodes[i].children || []) });
     return out;
 }
-function refreshPresetSelect() {
-    var sel = document.getElementById("presetSelect");
-    sel.innerHTML = "";
-    if (presets.length === 0) {
-        var o = document.createElement("option"); o.value = ""; o.textContent = "(no presets yet)"; sel.appendChild(o);
-    } else {
-        for (var i = 0; i < presets.length; i++) { var op = document.createElement("option"); op.value = presets[i].name; op.textContent = presets[i].name; sel.appendChild(op); }
-    }
-    sel.value = builderPresetName;
-}
+/* One preset, not many.
+ *
+ * The picker could only ever offer a single entry, and Save prompting for a
+ * name made a two-step job out of "keep this". The stored shape stays an array
+ * so nothing about the saved data changes — presets[0] is simply the only one
+ * the UI knows about, and a machine already carrying several keeps them on disk
+ * rather than having them thrown away by an update.
+ */
+var THE_PRESET = "My structure";
+
 function openBuilder() {
     if (presets.length) { builderPresetName = presets[0].name; builderTree = normalize(clone(presets[0].tree)); }
     else { builderPresetName = ""; builderTree = normalize(clone(DEFAULT_TEMPLATE)); }
-    refreshPresetSelect();
     renderBuilder();
     setBuilderStatus("", "");
     showView("builder");
 }
-function selectPresetByName(name) {
-    for (var i = 0; i < presets.length; i++) if (presets[i].name === name) { builderPresetName = name; builderTree = normalize(clone(presets[i].tree)); renderBuilder(); return; }
-}
-function newPreset() {
-    builderPresetName = "";
-    builderTree = normalize([{ name: "New bin", color: "", children: [] }]);
-    refreshPresetSelect();
-    renderBuilder();
-    setBuilderStatus("New preset — build it, then Save.", "");
-}
 function savePreset() {
-    promptModal("Save preset as…", builderPresetName, function (name) {
-        if (!name) return;
-        var tree = stripToPreset(builderTree);
-        var found = false;
-        for (var i = 0; i < presets.length; i++) if (presets[i].name === name) { presets[i].tree = tree; found = true; break; }
-        if (!found) presets.push({ name: name, tree: tree });
-        savePresets();
-        builderPresetName = name;
-        refreshPresetSelect();
-        setBuilderStatus("✓ Saved “" + name + "”.", "ok");
-    });
+    var tree = stripToPreset(builderTree);
+    var name = builderPresetName || (presets.length ? presets[0].name : THE_PRESET);
+    var found = false;
+    for (var i = 0; i < presets.length; i++) if (presets[i].name === name) { presets[i].tree = tree; found = true; break; }
+    if (!found) presets.unshift({ name: name, tree: tree });
+    savePresets();
+    builderPresetName = name;
+    setBuilderStatus("✓ Saved.", "ok");
 }
-function deletePreset() {
-    if (!builderPresetName) { setBuilderStatus("Nothing to delete — this preset isn’t saved.", "error"); return; }
-    var name = builderPresetName;
-    confirmModal("Delete “" + name + "”?", "This preset is removed for all projects.", "Delete", true, function (ok) {
+/* Clear resets the STRUCTURE, not the saved preset — a destructive-sounding
+ * button in a builder should undo your editing, not silently drop something
+ * every project depends on. Saving afterwards is what makes it stick. */
+function clearPreset() {
+    confirmModal("Reset the structure?", "Back to the built-in default. Nothing in your project is touched, and the saved preset only changes if you Save afterwards.", "Reset", true, function (ok) {
         if (!ok) return;
-        for (var i = 0; i < presets.length; i++) if (presets[i].name === name) { presets.splice(i, 1); break; }
-        savePresets();
-        openBuilder();
-        setBuilderStatus("Deleted “" + name + "”.", "");
+        builderTree = normalize(clone(DEFAULT_TEMPLATE));
+        renderBuilder();
+        setBuilderStatus("Reset to the default structure — Save to keep it.", "");
     });
 }
 // Apply builderTree into the current project, keeping links/pins where names match.
@@ -3150,20 +3444,49 @@ function buildBuilderLevel(host, nodes, depth) {
             var inp = row.querySelector(".tname");
             inp.value = node.name;
             inp.addEventListener("input", function () { node.name = inp.value; });
+            /* Enter finishes the name. The field writes straight through on every
+             * keystroke, so there is nothing to commit — but leaving focus in it
+             * means the next Enter or keystroke goes somewhere unexpected, and
+             * "done" should feel done. Escape puts the previous name back. */
+            var wasNamed = node.name;
+            inp.addEventListener("keydown", function (e) {
+                if (e.key === "Enter") { e.preventDefault(); inp.blur(); }
+                else if (e.key === "Escape") { e.preventDefault(); node.name = wasNamed; inp.value = wasNamed; inp.blur(); }
+            });
+            inp.addEventListener("focus", function () { wasNamed = node.name; });
             wireMenu(row, node, builderSetColor, builderAct);
             host.appendChild(row);
+            /* A bin added a moment ago opens ready to type, with "New bin"
+             * selected so the first keystroke replaces it. Without this every
+             * new bin needs a click into a field you are already looking at. */
+            if (node === builderFocusNode) {
+                builderFocusNode = null;
+                setTimeout(function () { try { inp.focus(); inp.select(); } catch (e) {} }, 0);
+            }
 
             if (node.children && node.children.length) buildBuilderLevel(host, node.children, depth + 1);
         })(nodes[i]);
     }
 }
+var builderFocusNode = null;      // the bin added last, to be focused once drawn
 function builderSetColor(node, color) { node.color = color || ""; renderBuilder(); }
 function builderAct(act, node) {
     if (act === "addsub") { builderAddChild(node); }
     else if (act === "remove") { var p = findParentIn(builderTree, node); if (p) { p.arr.splice(p.idx, 1); renderBuilder(); } }
 }
-function builderAddChild(node) { if (!node.children) node.children = []; node.children.push({ name: "New bin", color: "", children: [] }); renderBuilder(); }
-function builderAddTop() { builderTree.push({ name: "New bin", color: "", children: [] }); renderBuilder(); }
+function builderAddChild(node) {
+    if (!node.children) node.children = [];
+    var kid = { name: "New bin", color: "", children: [] };
+    node.children.push(kid);
+    builderFocusNode = kid;
+    renderBuilder();
+}
+function builderAddTop() {
+    var top = { name: "New bin", color: "", children: [] };
+    builderTree.push(top);
+    builderFocusNode = top;
+    renderBuilder();
+}
 
 // ====================================================================
 //  READ THE PROJECT'S EXISTING BINS
@@ -3661,10 +3984,31 @@ document.addEventListener("DOMContentLoaded", function () {
 
     document.getElementById("gearBtn").onclick = function (e) { e.stopPropagation(); toggleGear(); };
     document.getElementById("giPresets").onclick = function () { closeGear(); openBuilder(); };
-    document.getElementById("giReload").onclick = function () { closeGear(); refreshProject(true); setStatus("Reloaded for this project.", ""); };
-    document.getElementById("giAddTop").onclick = function () { closeGear(); addTopBin(); };
+
     document.getElementById("giReset").onclick = function () { closeGear(); resetStructure(); };
-    document.getElementById("giRead").onclick = function () { closeGear(); readProjectBins(); };
+    // the toolbar
+    document.getElementById("tbAddTop").onclick = addTopBin;
+    document.getElementById("tbRead").onclick = readProjectBins;
+    document.getElementById("tbReload").onclick = function () {
+        refreshProject(true); setStatus("Reloaded for this project.", "");
+    };
+    document.getElementById("tbRecolor").onclick = function () {
+        setStatus("Re-applying colours…", "");
+        recolorAll(function (n) {
+            setStatus(n ? ("Coloured " + n + " bin" + (n === 1 ? "" : "s") + " and their clips.")
+                        : "No bins have a colour set.", n ? "ok" : "");
+        });
+    };
+    document.getElementById("giLog").onclick = function () { closeGear(); openLog(); };
+    document.getElementById("logBack").onclick = function () { showView("main"); };
+    document.getElementById("logClear").onclick = function () {
+        confirmModal("Clear the import log?", "Only the record goes. Your files, bins and links are untouched.", "Clear", true, function (ok) {
+            if (!ok) return;
+            clearLog();
+            renderLog();
+        });
+    };
+    wireSearch();
     document.getElementById("giUpdate").onclick = function () { closeGear(); checkForUpdate(true); };
     // The escape hatch for the new tile-click behaviour: anyone who preferred
     // the old one gets it back here, with no reinstall and no restart.
@@ -3681,10 +4025,8 @@ document.addEventListener("DOMContentLoaded", function () {
     // builder view
     document.getElementById("builderBack").onclick = function () { showView("main"); };
     document.getElementById("builderAddBin").onclick = builderAddTop;
-    document.getElementById("presetNewBtn").onclick = newPreset;
-    document.getElementById("presetSelect").onchange = function (e) { selectPresetByName(e.target.value); };
     document.getElementById("savePresetBtn").onclick = savePreset;
-    document.getElementById("deletePresetBtn").onclick = deletePreset;
+    document.getElementById("clearPresetBtn").onclick = clearPreset;
     document.getElementById("applyPresetBtn").onclick = applyPresetToProject;
 
     // click elsewhere closes menus / gear

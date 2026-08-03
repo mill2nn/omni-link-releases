@@ -11,6 +11,7 @@
         <!-- ============ MAIN VIEW ============ -->
         <div id="mainView" class="view">
             <div class="header">
+                <div class="headerTop">
                 <button id="importBtn" class="importPill" data-tip="<b>Import new files</b>Goes through every bin that has a folder linked and brings in anything that isn't already there. Files you've imported before are skipped, so pressing it twice never duplicates anything.">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11" /><path d="M8 11l4 4 4-4" /><path d="M5 20h14" /></svg>
                     <span>Import</span>
@@ -32,21 +33,13 @@
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
                             Customize presets…
                         </button>
-                        <button class="gearItem" id="giReload" data-tip="Re-read this project's saved structure from disk. Useful if the panel and the project have drifted apart.">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.7-5.7L20 8M20 4v4h-4" /><path d="M20 12a8 8 0 0 1-13.7 5.7L4 16M4 20v-4h4" /></svg>
-                            Reload for this project
-                        </button>
-                        <button class="gearItem" id="giAddTop" data-tip="Add an empty bin at the top level. You can also drag a folder onto BIN STRUCTURE to make one that's already linked.">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-                            Add top-level bin
-                        </button>
-                        <button class="gearItem" id="giRead" data-tip="Scan the open Premiere project and rebuild the panel's structure from the bins that are actually in it.">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M8 13h8" /><path d="M12 9v8" /></svg>
-                            Read bins from project
-                        </button>
                         <button class="gearItem" id="giTileMode" data-tip="Change what clicking a pinned bin does: show what's inside it here, or just highlight it in Premiere's Project panel.">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10" /><circle cx="19" cy="18" r="2" /></svg>
                             <span id="giTileModeLabel">Pinned click: highlight instead</span>
+                        </button>
+                        <button class="gearItem" id="giLog" data-tip="Every import that brought files in, newest first — which bin, and which files.">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h9" /><circle cx="18" cy="18" r="3" /></svg>
+                            Import log
                         </button>
                         <button class="gearItem" id="giUpdate" data-tip="Ask the releases repo whether there's a newer version. Nothing installs on its own — you get a button.">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 21h16" /></svg>
@@ -57,6 +50,29 @@
                             Reset structure
                         </button>
                     </div>
+                </div>
+                </div><!-- /headerTop -->
+
+                <!-- The four everyday actions, out of the gear where they were a
+                     click and a hunt away. Icon + label: at this width icons
+                     alone would be four guesses in a row. -->
+                <div class="toolbar">
+                    <button id="tbAddTop" class="tbBtn" data-tip="Add an empty bin at the top level.<i>Or drag a folder onto the list below to make one that is already linked.</i>">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+                        <span>Add bin</span>
+                    </button>
+                    <button id="tbRead" class="tbBtn" data-tip="Scan the open Premiere project and rebuild this structure from the bins actually in it.">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M8 13h8" /><path d="M12 9v8" /></svg>
+                        <span>Read</span>
+                    </button>
+                    <button id="tbRecolor" class="tbBtn" data-tip="Push every bin's colour back onto its clips.<i>Runs on Import already — this is for a label changed by hand.</i>">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 9 9c0-1-1-1.5-2-1.5h-2a2 2 0 0 1 0-4h1c1 0 2-.7 2-2A4.5 4.5 0 0 0 12 3z" /><circle cx="7.5" cy="11.5" r="1" /><circle cx="12" cy="7.5" r="1" /></svg>
+                        <span>Colours</span>
+                    </button>
+                    <button id="tbReload" class="tbBtn" data-tip="Re-read this project's saved structure from disk, if the panel and the project have drifted apart.">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.7-5.7L20 8M20 4v4h-4" /><path d="M20 12a8 8 0 0 1-13.7 5.7L4 16M4 20v-4h4" /></svg>
+                        <span>Reload</span>
+                    </button>
                 </div>
             </div>
 
@@ -111,6 +127,16 @@
                         <button class="gearItem cSortOpt tSortOpt" data-sort="linked"><span class="cTick"></span>Linked first</button>
                     </div>
                 </div>
+            </div>
+
+            <div class="searchRow">
+                <svg class="searchIco" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7" /><path d="M20 20l-4.3-4.3" /></svg>
+                <input id="searchInput" type="text" placeholder="Search bins…" spellcheck="false"
+                       data-tip="Filter the bin structure by name.<i>A bin with a match inside opens automatically. Escape clears.</i>" />
+                <button id="searchClear" class="searchClear" style="display:none;" aria-label="Clear the search">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                </button>
+                <span id="searchCount" class="searchCount"></span>
             </div>
 
             <div id="treeList" class="treeList"></div>
@@ -169,6 +195,23 @@
         </div>
 
         <!-- ============ PRESET BUILDER VIEW ============ -->
+        <!-- ============ IMPORT LOG ============ -->
+        <div id="logView" class="view" style="display:none;">
+            <div class="header">
+                <button id="logBack" class="navBtn" data-tip="Back to the main panel." aria-label="Back">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+                </button>
+                <div class="htext">
+                    <h1>Import log</h1>
+                    <div class="projName">what came in, newest first</div>
+                </div>
+                <button id="logClear" class="navBtn" data-tip="Forget this project's import history.<i>Your files and bins are untouched — this only clears the record.</i>" aria-label="Clear the log">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" /></svg>
+                </button>
+            </div>
+            <div id="logList" class="logList"></div>
+        </div>
+
         <div id="builderView" class="view" style="display:none;">
             <div class="header">
                 <button id="builderBack" class="navBtn" data-tip="Back to the main panel." aria-label="Back">
@@ -178,14 +221,6 @@
                     <h1>Preset builder</h1>
                     <div class="projName">structure + colors · reused across projects</div>
                 </div>
-            </div>
-
-            <div class="presetRow">
-                <select id="presetSelect"></select>
-                <button id="presetNewBtn" class="miniBtn" data-tip="Start a new preset from an empty structure." aria-label="New preset">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-                    New
-                </button>
             </div>
 
             <div id="builderList" class="treeList"></div>
@@ -202,13 +237,13 @@
                 Apply to current project
             </button>
             <div class="builderBtns">
-                <button id="savePresetBtn" class="ghost2">
+                <button id="savePresetBtn" data-tip="Save this structure. It is the one preset, reused in every project." class="ghost2">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5zM8 3v6h7M8 21v-6h8v6" /></svg>
                     Save
                 </button>
-                <button id="deletePresetBtn" class="ghost2 danger">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" /></svg>
-                    Delete
+                <button id="clearPresetBtn" class="ghost2 danger" data-tip="Reset the structure back to the built-in default. Nothing in your project is touched.">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.7-5.7L20 8M20 4v4h-4" /><path d="M20 12a8 8 0 0 1-13.7 5.7L4 16M4 20v-4h4" /></svg>
+                    Clear
                 </button>
             </div>
             <div id="builderStatus" class="status"></div>

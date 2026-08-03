@@ -158,7 +158,19 @@ function aip_import(binPath, folderPath, extCsv, colorIndex) {
         }
     }
 
-    return "" + toImport.length;
+    /* Count first, then the names.
+     *
+     * Both callers read this with parseInt, which stops at the separator — so
+     * appending the filenames costs nothing on the old path while giving the
+     * import log and the "3 new" badges something to actually show. A count
+     * alone can tell you something arrived but never what.
+     */
+    var names = [];
+    for (var n = 0; n < toImport.length; n++) {
+        var nm = String(toImport[n]).replace(/^.*[\/\\]/, "");
+        names.push(nm.replace(/[\t\r\n\u0001]/g, " "));
+    }
+    return "" + toImport.length + AIP_FIELD_SEP + names.join("\n");
 }
 
 // ---------- bin label color ----------
@@ -552,6 +564,43 @@ function aip_colorClips(bin, idx) {
         if (it.type == 2) { aip_colorClips(it, idx); }        // recurse into sub-bins
         else { try { if (typeof it.setColorLabel === "function") it.setColorLabel(idx); } catch (e) {} }
     }
+}
+
+/*
+ * Re-apply every bin's colour in one pass.
+ *
+ * blob = one line per bin, "binPath<TAB>labelIndex". Bins are addressed by the
+ * same tab-joined path as everywhere else, so the last field is the index.
+ *
+ * One call instead of one per bin: the panel used to fire these in parallel,
+ * which meant a project with twenty coloured bins opened twenty concurrent
+ * ExtendScript calls, each walking a subtree. Sequential inside a single call
+ * is both faster and impossible to interleave with an import.
+ *
+ * Returns "OK:<coloured>/<asked>" — a bin that no longer exists is skipped
+ * rather than failing the batch, and the difference is worth reporting.
+ */
+function aip_recolorAll(blob) {
+    if (!app.project) return "ERR:No project open";
+    var lines = String(blob).split("\n");
+    var done = 0, asked = 0;
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line === "") continue;
+        var cut = line.lastIndexOf("\t");
+        if (cut <= 0) continue;
+        var idx = parseInt(line.substring(cut + 1), 10);
+        if (isNaN(idx)) continue;
+        asked++;
+        var bin = aip_findBinPath(line.substring(0, cut).split("\t"));
+        if (bin === null) continue;                     // renamed or deleted since
+        try {
+            if (typeof bin.setColorLabel === "function") bin.setColorLabel(idx);
+            aip_colorClips(bin, idx);
+            done++;
+        } catch (e) {}
+    }
+    return "OK:" + done + "/" + asked;
 }
 
 /*
