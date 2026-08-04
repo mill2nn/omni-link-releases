@@ -16,10 +16,9 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11" /><path d="M8 11l4 4 4-4" /><path d="M5 20h14" /></svg>
                     <span>Import</span>
                 </button>
-                <!-- icon only: at 300px a second labelled pill does not fit -->
-                <button id="setupBtn" class="navBtn setupBtn" data-tip="<b>Set up from this project</b>Reads the bins already in your Premiere project, rebuilds that structure here, and links each bin to the folder its clips came from. Use it once on a project you built by hand." aria-label="Set up from this project">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M12 15V9" /><path d="M9.5 11.5 12 9l2.5 2.5" /></svg>
-                </button>
+                <!-- No second action beside Import: "set up from this project" is
+                     the toolbar's Read button, and two controls for one job is
+                     one control too many at this width. -->
                 <div class="htext">
                     <h1>Omni Link</h1>
                     <div id="projName" class="projName">—</div>
@@ -123,8 +122,10 @@
                      toolbar because it is a view control like the sort beside
                      it, and four buttons already fill a 300px dock. -->
                 <button id="foldAllBtn" class="cRev cFold" aria-label="Fold every bin">
-                    <svg class="fIn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l5 5 5-5"/><path d="M7 19l5-5 5 5"/></svg>
-                    <svg class="fOut" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 9l5-5 5 5"/><path d="M7 15l5 5 5-5"/></svg>
+                    <!-- The bar in the middle is what stops two facing chevrons
+                         reading as a close button at 12px. -->
+                    <svg class="fIn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16"/><path d="M8 6l4 4 4-4"/><path d="M8 18l4-4 4 4"/></svg>
+                    <svg class="fOut" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16"/><path d="M8 9l4-4 4 4"/><path d="M8 15l4 4 4-4"/></svg>
                 </button>
                 <!-- Same control as the contents list, so one thing to learn. -->
                 <button class="cRev tRev" aria-label="Reverse the order">
@@ -164,10 +165,11 @@
                 <div class="dzSub">One bin per folder, linked and ready to import</div>
             </div>
 
-            <button id="addBinBtn" class="add" data-tip="Add an empty top-level bin.<i>Or drop a folder here to make a bin that's already linked to it.</i>">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-                Add bin
-            </button>
+            <!-- The toolbar's "Add bin" is the one; a full-width twin at the end
+                 of the list was the same action in a second place. Dropping a
+                 folder on the list is still how a LINKED bin gets made, and the
+                 empty-state zone above covers the case where there is no list
+                 to drop onto yet. -->
             </div><!-- /structWrap -->
 
             <!-- A bin's contents. Premiere exposes no way to open or scroll to a
@@ -259,7 +261,7 @@
                 Add bin
             </button>
 
-            <div class="spacer"></div>
+            <div class="pushDown"></div>
 
             <button id="applyPresetBtn" class="createBtn">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5" /></svg>

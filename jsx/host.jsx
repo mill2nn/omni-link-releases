@@ -157,6 +157,18 @@ function aip_import(binPath, folderPath, extCsv, colorIndex) {
     for (var b = 0; b < root.children.numItems; b++) {
         beforeAtRoot[root.children[b].nodeId] = true;
     }
+    /* And snapshot the TARGET bin, so the count returned below can be measured
+     * rather than assumed.
+     *
+     * This used to return toImport.length — what the import was asked to bring
+     * in, not what arrived. When Premiere silently refuses a file the panel
+     * therefore reported success, the file never landed in the bin, the dedupe
+     * never saw it, and the next press tried again: "imported 1 new file",
+     * forever, with nothing to show for it. */
+    var beforeInBin = {};
+    for (var q2 = 0; q2 < bin.children.numItems; q2++) {
+        beforeInBin[bin.children[q2].nodeId] = true;
+    }
 
     try {
         // importFiles(paths, suppressUI, targetBin, importAsNumberedStills)
@@ -182,19 +194,37 @@ function aip_import(binPath, folderPath, extCsv, colorIndex) {
         }
     }
 
-    /* Count first, then the names.
+    /* What actually arrived, measured against the snapshot.
      *
      * Both callers read this with parseInt, which stops at the separator — so
      * appending the filenames costs nothing on the old path while giving the
      * import log and the "3 new" badges something to actually show. A count
      * alone can tell you something arrived but never what.
      */
-    var names = [];
-    for (var n = 0; n < toImport.length; n++) {
-        var nm = String(toImport[n]).replace(/^.*[\/\\]/, "");
-        names.push(nm.replace(/[\t\r\n\u0001]/g, " "));
+    var names = [], landed = {};
+    for (var a = 0; a < bin.children.numItems; a++) {
+        var ai = bin.children[a];
+        if (beforeInBin[ai.nodeId]) continue;
+        var an = String(ai.name);
+        names.push(an.replace(/[\t\r\n\u0001]/g, " "));
+        landed[an.toLowerCase()] = true;
+        // Premiere drops the extension on some formats, so the stem counts too.
+        landed[aip_stripExt(an).toLowerCase()] = true;
     }
-    return "" + toImport.length + AIP_FIELD_SEP + names.join("\n");
+
+    /* Anything asked for that cannot be found in the bin afterwards. Named, not
+     * counted: "1 file would not import" is not actionable, and the whole point
+     * of this branch is that pressing Import again will not help. */
+    var refused = [];
+    for (var m = 0; m < toImport.length; m++) {
+        var mn = String(toImport[m]).replace(/^.*[\/\\]/, "");
+        if (landed[mn.toLowerCase()] || landed[aip_stripExt(mn).toLowerCase()]) continue;
+        refused.push(mn.replace(/[\t\r\n\u0001]/g, " "));
+    }
+
+    var out = "" + names.length + AIP_FIELD_SEP + names.join("\n");
+    if (refused.length) out += AIP_FIELD_SEP + "refused=" + refused.join(" | ");
+    return out;
 }
 
 // ---------- bin label color ----------

@@ -22,7 +22,7 @@ var cs = new CSInterface();
 // Bump this AND ExtensionBundleVersion in CSXS/manifest.xml together — the
 // shareable-zip script fails the build if the two ever disagree, because
 // "which version are you on?" has to have one answer.
-var VERSION = "1.3.9";
+var VERSION = "1.3.10";
 
 /*
  * What Import picks up. A format missing from here is skipped in silence — the
@@ -89,6 +89,15 @@ var ICON_CHEV =
 var ICON_FOLDER_FILLED =
     '<svg viewBox="0 0 24 24" fill="currentColor">' +
     '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+// The same magnifier the bin-structure search uses, so one thing to recognise.
+var ICON_SEARCH =
+    '<svg class="adoptFindIco" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4.3-4.3"/></svg>';
+// Chevrons toward a bar. The bar is what stops two facing chevrons reading as a
+// close button at this size — same reasoning as the tree's fold-all button.
+var ICON_FOLD =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M4 12h16"/><path d="M8 6l4 4 4-4"/><path d="M8 18l4-4 4 4"/></svg>';
 // A short list with a downward arrow: what came IN here, in order.
 var ICON_LOG =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
@@ -422,7 +431,6 @@ function applyCollapsed() {
     // The search belongs to this section now, so it folds away with it — a
     // filter box floating above a collapsed list has nothing to filter.
     var sr = document.querySelector(".searchRow"); if (sr) sr.style.display = c ? "none" : "flex";
-    var ab = document.getElementById("addBinBtn"); if (ab) ab.style.display = c ? "none" : "";
     // collapsing frees the lower half, so the shelf gets roomier tiles
     document.body.classList.toggle("treeCollapsed", c);
     if (treeData) renderPinned();
@@ -624,11 +632,14 @@ function syncContentsView() {
 }
 
 function closeContents() {
+    rememberScroll("contents");
     contentsPath = null;
     contentsRoot = null;
     contentsRows = [];
     contentsShown = [];
     syncContentsView();
+    currentView = "main";
+    restoreScroll("main");
 }
 
 /* Records are kind ⁠| index ⁠| name ⁠| meta ⁠| offline, one per line — see
@@ -838,6 +849,8 @@ function nodeAtBinPath(path) {
  * panel ends up inside the same bin the list is showing. Off for a refresh
  * after a stale click — that is the panel catching up, not a place to go. */
 function openContents(path, root, reveal) {
+    // Same reason as showView: the structure is taller than the contents list.
+    if (!contentsPath) { rememberScroll("main"); currentView = "contents"; }
     if (reveal) revealBinPath(path, path[path.length - 1] || "");
     contentsPath = path.slice();
     contentsRoot = root ? root.slice() : path.slice();
@@ -2177,7 +2190,7 @@ function makeRow(entry) {
             // fold/unfold parents; leaves get a spacer so names stay aligned
             var chev = kids
                 ? '<button class="tchev' + (open ? "" : " closed") + '" data-tip="Fold or unfold this bin\'s sub-bins.">' + ICON_CHEV + '</button>'
-                : '<span class="tchev spacer"></span>';
+                : '<span class="tchev blank"></span>';
             // linked bins name their folder; unlinked ones say so in words —
             // a dashed border had to compete with three other dashed meanings
             // Root bins are usually just containers, so "not linked" on them is noise.
@@ -2412,10 +2425,10 @@ function syncDropZone() {
     if (dz) dz.style.display = treeData && treeData.length ? "none" : "";
 }
 
-// "+ Add bin" and the empty-state zone both accept a folder drop → top-level bins
-// appended at the end. Neither needs the gap machinery: there is only one answer.
+// The empty-state zone accepts a folder drop → top-level bins appended at the
+// end. It needs none of the gap machinery: with no rows there is only one answer.
 function wireBigDrops() {
-    ["dropZone", "addBinBtn"].forEach(function (id) {
+    ["dropZone"].forEach(function (id) {
         var el = document.getElementById(id);
         if (!el) return;
         el.addEventListener("dragover", function (e) { e.preventDefault(); el.classList.add("fileOver"); });
@@ -2778,24 +2791,10 @@ function addTopBin() {
 var MIRROR_MAX_DEPTH = 6;         // safety valve on pathological folder trees
 
 // Immediate subfolders, visible ones only (skips .DS_Store & friends).
-function subfoldersOf(path) {
-    var fs = nodeFs();
-    if (!fs) return [];
-    var out = [];
-    try {
-        var names = fs.readdirSync(path);
-        for (var i = 0; i < names.length; i++) {
-            if (names[i].charAt(0) === ".") continue;
-            var full = joinPath(path, names[i]);
-            try { if (fs.statSync(full).isDirectory()) out.push(full); } catch (e) {}
-        }
-    } catch (e2) {}
-    return out;
-}
 function countSubfoldersDeep(path, depth) {
     if ((depth || 0) >= MIRROR_MAX_DEPTH) return 0;
     var subs = subfoldersOf(path), n = subs.length;
-    for (var i = 0; i < subs.length; i++) n += countSubfoldersDeep(subs[i], (depth || 0) + 1);
+    for (var i = 0; i < subs.length; i++) n += countSubfoldersDeep(subs[i].path, (depth || 0) + 1);
     return n;
 }
 
@@ -2816,7 +2815,7 @@ function placeLinkedBin(arr, folder, mirror, depth, tally, at) {
     }
     if (mirror && depth < MIRROR_MAX_DEPTH) {
         var subs = subfoldersOf(folder);
-        for (var s = 0; s < subs.length; s++) placeLinkedBin(node.children, subs[s], true, depth + 1, tally, null);
+        for (var s = 0; s < subs.length; s++) placeLinkedBin(node.children, subs[s].path, true, depth + 1, tally, null);
         if (subs.length) node.open = true;
     }
     return { node: node, inserted: !existed };
@@ -3015,8 +3014,16 @@ function syncMirrorLabel() {
     if (el) el.textContent = mirrorOn() ? "Mirror subfolders: on" : "Mirror subfolders: off";
 }
 
-function subfoldersOf(fs, dir) {
+/* The one implementation. There used to be two with this name — one taking a
+ * path and returning strings, one taking (fs, dir) and returning {name, path} —
+ * and the later declaration silently won. Every caller of the first therefore
+ * passed a string where `fs` was expected, threw inside the try, and got an
+ * empty array back: no error anywhere, and folder mirroring quietly saw zero
+ * subfolders forever. run-all.js now fails on a duplicate name. */
+function subfoldersOf(dir) {
+    var fs = nodeFs();
     var out = [];
+    if (!fs) return out;
     var names;
     try { names = fs.readdirSync(dir); } catch (e) { return out; }
     for (var i = 0; i < names.length; i++) {
@@ -3032,14 +3039,33 @@ function subfoldersOf(fs, dir) {
 
 /* Returns how many bins were created. Does not save or render — the caller
  * decides, so an import can do both in one pass. */
+/* Is `child` a folder inside `parent`? Used only to decide how deep a single
+ * chain of mirroring has run, so the separator check matters: /a/bc is not
+ * inside /a/b. */
+function pathIsInside(parent, child) {
+    if (!parent || !child) return false;
+    var pp = String(parent).replace(/[\/\\]+$/, ""), cc = String(child);
+    return cc.indexOf(pp + "/") === 0 || cc.indexOf(pp + "\\") === 0;
+}
+
 function mirrorSubfolders() {
-    var fs = nodeFs();
-    if (!fs) return 0;
+    if (!nodeFs()) return 0;
     var added = 0;
-    for (var t = 0; t < treeData.length; t++) {
-        (function walk(node, depth) {
-            if (depth > MIRROR_MAX_DEPTH || !node.folder || added >= MIRROR_MAX_NEW) return;
-            var subs = subfoldersOf(fs, node.folder);
+    /* Every bin that has a folder, wherever it sits in the tree.
+     *
+     * The old walk stopped at the first bin with no folder, so a single unlinked
+     * container — "Graphics", "Audio" — hid every linked bin beneath it. And it
+     * only descended into children it had just matched against a subfolder on
+     * disk, so a sub-bin linked to a folder somewhere else entirely was never
+     * visited at all. Between them that is most of a real structure, which is
+     * why new subfolders appeared to be ignored.
+     *
+     * A bin's OWN link decides whether it mirrors. Its parent has no say.
+     */
+    function mirrorInto(node, chainDepth, guard) {
+        if (added >= MIRROR_MAX_NEW || guard > 40) return;
+        if (node.folder && chainDepth <= MIRROR_MAX_DEPTH) {
+            var subs = subfoldersOf(node.folder);
             if (!node.children) node.children = [];
             for (var i = 0; i < subs.length && added < MIRROR_MAX_NEW; i++) {
                 var have = null;
@@ -3057,10 +3083,20 @@ function mirrorSubfolders() {
                     // it rather than making a second bin with the same name.
                     have.folder = subs[i].path;
                 }
-                walk(have, depth + 1);
             }
-        })(treeData[t], 1);
+        }
+        // Then into every child — including the ones just created, so a new
+        // folder's own subfolders come in on the same run.
+        var kids = node.children || [];
+        for (var k = 0; k < kids.length; k++) {
+            // The depth cap counts one chain of mirroring, so a sub-bin linked
+            // somewhere else starts its own count rather than inheriting a
+            // budget already spent on a different folder.
+            var nested = pathIsInside(node.folder, kids[k].folder);
+            mirrorInto(kids[k], nested ? chainDepth + 1 : 1, guard + 1);
+        }
     }
+    for (var t = 0; t < treeData.length; t++) mirrorInto(treeData[t], 1, 0);
     return added;
 }
 
@@ -3116,6 +3152,7 @@ function importAll() {
 function runImports(jobs, madeBit) {
     var total = 0, errors = [], i = 0;
     var got = [];                     // { bin, files[] } for the log and the badges
+    var refused = [];                 // asked for, and not in the bin afterwards
     var trace = [];                   // one line per bin, whatever happened
     clearFresh();
     function next() {
@@ -3126,6 +3163,7 @@ function runImports(jobs, madeBit) {
              * a log full of "imported 0" entries buries the ones that matter. */
             if (total > 0 || errors.length) {
                 appendLog({ at: new Date().toISOString(), total: total, bins: got,
+                            refused: refused.slice(),
                             errors: errors.slice(), trace: trace.slice() });
             }
             var detail = trace.length ? ("What Premiere reported, bin by bin:<br>" +
@@ -3160,11 +3198,23 @@ function runImports(jobs, madeBit) {
                 if (isNaN(n)) errors.push(leaf + ": Premiere didn’t run the import (" + (res || "no response") + ")");
                 else {
                     total += n;
+                    /* Fields: count, then the names, then an optional note. The
+                     * note is how the host reports files it asked Premiere for
+                     * and could not find in the bin afterwards — the case that
+                     * used to come back as "imported 1 new file" on every press
+                     * while nothing ever arrived. */
+                    var fields = txt.split(FIELD_SEP);
+                    var note = fields.length > 2 ? fields[2] : "";
+                    if (note.indexOf("refused=") === 0) {
+                        var which = note.substring(8);
+                        refused.push({ bin: j.bin, files: which.split(" | ") });
+                        errors.push(leaf + ": Premiere would not import " + which);
+                    }
                     if (n > 0) {
                         // Names arrive after the field separator; an older host
                         // that only returns a count still logs the bin and total.
                         var cut = txt.indexOf(FIELD_SEP);
-                        var list = cut < 0 ? [] : txt.substring(cut + 1).split("\n");
+                        var list = cut < 0 ? [] : fields[1].split("\n");
                         var keep = [];
                         for (var f2 = 0; f2 < list.length && keep.length < LOG_FILES_MAX; f2++) {
                             if (list[f2] !== "") keep.push(list[f2]);
@@ -3503,8 +3553,10 @@ function logLineLeaf(line) {
  * say about this bin, so the run is dropped entirely. */
 function logRunView(run) {
     var bins = run.bins || [], errors = run.errors || [], trace = run.trace || [];
+    var refused = run.refused || [];
     if (!logFilterBin || !logFilterBin.length) {
-        return { at: run.at, total: run.total || 0, bins: bins, errors: errors, trace: trace };
+        return { at: run.at, total: run.total || 0, bins: bins, errors: errors,
+                 trace: trace, refused: refused };
     }
     var leaves = logFilterLeaves(), keptBins = [], total = 0;
     for (var i = 0; i < bins.length; i++) {
@@ -3515,8 +3567,13 @@ function logRunView(run) {
     var keptErr = [], keptTr = [];
     for (var e = 0; e < errors.length; e++) if (leaves[logLineLeaf(errors[e])]) keptErr.push(errors[e]);
     for (var t = 0; t < trace.length; t++) if (leaves[logLineLeaf(trace[t])]) keptTr.push(trace[t]);
-    if (!keptBins.length && !keptErr.length && !keptTr.length) return null;
-    return { at: run.at, total: total, bins: keptBins, errors: keptErr, trace: keptTr };
+    var keptRef = [];
+    for (var rf = 0; rf < refused.length; rf++) {
+        if (logBinMatches(String(refused[rf].bin || ""))) keptRef.push(refused[rf]);
+    }
+    if (!keptBins.length && !keptErr.length && !keptTr.length && !keptRef.length) return null;
+    return { at: run.at, total: total, bins: keptBins, errors: keptErr,
+             trace: keptTr, refused: keptRef };
 }
 function logHasHistory(np) {
     if (!np || !np.length) return false;
@@ -3587,10 +3644,33 @@ function shortFolder(folder) {
     return (keep.length < parts.length - 1 ? "\u2026/" : "/") + keep.join("/");
 }
 
+/* Whether a folder is still on disk. Cached for the length of one render: a log
+ * with sixty runs in it would otherwise stat the same paths hundreds of times. */
+var logExistCache = {};
+function logFolderThere(folder) {
+    if (logExistCache[folder] === undefined) logExistCache[folder] = pathExists(folder);
+    return logExistCache[folder];
+}
+/* The folder a bin read from, as something you can click.
+ *
+ * Checking it is the whole reason to look: "did those files really come from
+ * where I think" is answered by opening it, and a folder that has since moved is
+ * answered by saying so rather than by opening nothing. */
+function logFromHTML(folder) {
+    var there = logFolderThere(folder);
+    var full = esc(folder).replace(/"/g, "&quot;");
+    return '<div class="logFrom' + (there ? " clickable" : " gone") +
+        '" data-folder="' + full + '" data-tip="' + full +
+        (there ? "<i>Click to open it in Finder.</i>"
+               : "<i>This folder is not there any more, so it cannot be opened.</i>") +
+        '">' + esc(shortFolder(folder)) + '</div>';
+}
+
 function renderLog() {
     var host = document.getElementById("logList");
     if (!host) return;
     syncLogHead();
+    logExistCache = {};
     var raw = loadLog(), log = [];
     for (var r = 0; r < raw.length; r++) {
         var v = logRunView(raw[r] || {});
@@ -3630,10 +3710,17 @@ function renderLog() {
              (nFiles ? nFiles + " new file" + (nFiles === 1 ? "" : "s") : "nothing new") +
              '</span></div>';
 
-        if (errors.length) {
-            for (var er = 0; er < errors.length; er++) {
-                h += '<div class="logErr">' + C_ICONS.warn + '<span>' + esc(errors[er]) + '</span></div>';
-            }
+        /* A refusal is pushed onto errors too, because that is what the status
+         * line reads. Printing both here says the same thing twice — once as a
+         * red line and once as its own block below it. */
+        var refusedLeaf = {};
+        var refusedList = run.refused || [];
+        for (var rl = 0; rl < refusedList.length; rl++) {
+            refusedLeaf[String(refusedList[rl].bin || "").split("\t").pop()] = 1;
+        }
+        for (var er = 0; er < errors.length; er++) {
+            if (/would not import/.test(errors[er]) && refusedLeaf[logLineLeaf(errors[er])]) continue;
+            h += '<div class="logErr">' + C_ICONS.warn + '<span>' + esc(errors[er]) + '</span></div>';
         }
 
         for (var b = 0; b < bins.length; b++) {
@@ -3652,8 +3739,7 @@ function renderLog() {
                  '<span class="logBinIco">' + C_ICONS.bin + '</span>' +
                  '<span class="logBinName">' + esc(leaf) + '</span>' +
                  '<span class="newBadge">+' + (bin.n || 0) + '</span></div>' +
-                 (folder ? '<div class="logFrom" data-tip="' + esc(folder).replace(/"/g, "&quot;") +
-                           '">' + esc(shortFolder(folder)) + '</div>' : '');
+                 (folder ? logFromHTML(folder) : '');
             for (var f = 0; f < files.length && f < 12; f++) {
                 var ft = logFileType(files[f]);
                 h += '<div class="logFile t' + ft + '"><span class="logFileIco">' + logFileIcon(ft) +
@@ -3662,6 +3748,25 @@ function renderLog() {
             if (files.length > 12) h += '<div class="logMore">\u2026and ' + (files.length - 12) + ' more</div>';
             else if (!files.length && bin.n) h += '<div class="logMore">(names not recorded)</div>';
             h += '</div>';
+        }
+
+        /* Files Premiere was asked for and would not take. Loud, and named:
+         * pressing Import again will not change the outcome, so the filename is
+         * the only actionable thing here. */
+        var refused = run.refused || [];
+        for (var rr = 0; rr < refused.length; rr++) {
+            var rleaf = String(refused[rr].bin || "").split("\t").pop();
+            var rfiles = refused[rr].files || [];
+            h += '<div class="logRefused">' + C_ICONS.warn +
+                 '<div><b>Premiere would not import ' + rfiles.length +
+                 ' file' + (rfiles.length === 1 ? "" : "s") + '</b> into ' + esc(rleaf);
+            for (var rn = 0; rn < rfiles.length && rn < 8; rn++) {
+                h += '<div class="logRefusedName">' + esc(rfiles[rn]) + '</div>';
+            }
+            if (rfiles.length > 8) h += '<div class="logRefusedName">…and ' + (rfiles.length - 8) + ' more</div>';
+            h += '<div class="logRefusedWhy">Pressing Import again will try the same file and fail ' +
+                 'the same way. Usually the format needs a plug-in Premiere does not have, ' +
+                 'or the file is still being written.</div></div></div>';
         }
 
         // One line for all the bins that stayed empty, opened only if asked.
@@ -3699,6 +3804,12 @@ function wireLogExpanders(host) {
         btns[i].onclick = function () {
             var box = this.parentNode;
             box.classList.toggle("open");
+        };
+    }
+    var froms = host.querySelectorAll(".logFrom.clickable");
+    for (var k = 0; k < froms.length; k++) {
+        froms[k].onclick = function () {
+            openInFinder(this.getAttribute("data-folder"));
         };
     }
 }
@@ -3864,10 +3975,41 @@ function resetStructure() {
             setStatus("Structure reset to default.", "ok");
         });
 }
+/* ---------- the panel remembers where you were ----------
+ *
+ * The whole panel scrolls as one column, so swapping the tall bin list for a
+ * short view makes the browser clamp scrollTop to 0 — and coming back landed at
+ * the top with the bin you had just clicked twenty rows further down. Each
+ * destination keeps its own position instead.
+ *
+ * Captured BEFORE the swap, while the tall content still exists to measure, and
+ * restored after it, once there is somewhere to scroll to.
+ */
+var viewScroll = { main: 0, log: 0, builder: 0, contents: 0 };
+var currentView = "main";
+function scrollHost() { return document.scrollingElement || document.documentElement; }
+function rememberScroll(name) {
+    var se = scrollHost();
+    if (se) viewScroll[name] = se.scrollTop;
+}
+function restoreScroll(name) {
+    var se = scrollHost();
+    if (!se) return;
+    var want = viewScroll[name] || 0;
+    se.scrollTop = want;
+    /* Twice, one frame apart. CEF finishes laying the taller content out after
+     * the display change on some builds, and until it has, scrollTop is clamped
+     * to a height that is about to grow. */
+    setTimeout(function () { if (se.scrollTop !== want) se.scrollTop = want; }, 0);
+}
+
 function showView(v) {
+    rememberScroll(currentView);
+    currentView = v;
     document.getElementById("mainView").style.display = (v === "main") ? "flex" : "none";
     document.getElementById("builderView").style.display = (v === "builder") ? "flex" : "none";
     document.getElementById("logView").style.display = (v === "log") ? "flex" : "none";
+    restoreScroll(v);
 }
 
 function setProjectLabel(key) {
@@ -4090,7 +4232,7 @@ function buildBuilderLevel(host, nodes, depth) {
             ];
 
             row.innerHTML =
-                '<span class="tchev spacer"></span>' +
+                '<span class="tchev blank"></span>' +
                 '<span class="ticon">' + ICON_FOLDER + '</span>' +
                 '<input class="tname" type="text" />' +
                 '<div class="rowMenu">' + menuHTML(bActs, node.name) + '</div>';
@@ -4223,36 +4365,106 @@ function readProjectBins() {
     });
 }
 
-// Tick-list of what the project already has. Ticking a child ticks its parents,
-// because a bin can't be adopted without the path that addresses it.
+/* Tick-list of what the project already has.
+ *
+ * Ticking a bin takes its whole subtree with it — a bin is where clips live, and
+ * wanting "Kling AI" without the versions under it is not the common case. It
+ * also ticks its ancestors, because the path IS the address: there is no way to
+ * adopt Source/Kling AI/v1 without Source and Kling AI existing.
+ *
+ * Unticking goes the other way and clears the subtree, but leaves ancestors
+ * alone — a parent usually has other children still wanted.
+ *
+ * setBox() assigns .checked directly, which does NOT fire a change event. That
+ * is what stops the cascades recursing into each other: an ancestor ticked as a
+ * side effect must not then tick all of ITS descendants.
+ */
 function showAdoptDialog(recs, trunc) {
-    var chosen = {}, folderOf = {}, paths = [];
+    /* Ticked by default: only the bins the panel does not already have.
+     *
+     * Everything-ticked was fine on a fresh project and wrong on a real one.
+     * Bom's has 370 bins, so pressing Read offered "Add 370 bins" — a default
+     * you have to fight rather than a choice. Adopting an existing bin is
+     * harmless (the merge keeps its folder, colour and pin) but it is not what
+     * you came for, and it buries the handful that are new.
+     */
+    var chosen = {}, folderOf = {}, paths = [], have = {}, newCount = 0;
     for (var i = 0; i < recs.length; i++) {
         paths.push(recs[i].path);
         folderOf[recs[i].path] = recs[i].folder;
-        chosen[recs[i].path] = true;
+        var already = !!nodeAtBinPath(recs[i].path.split("\t"));
+        have[recs[i].path] = already;
+        chosen[recs[i].path] = !already;
+        if (!already) newCount++;
     }
 
     var ov = document.createElement("div");
     ov.className = "modalOv";
+    // What the tick state means, said once, rather than left to be worked out
+    // from which rows happen to be on.
+    // Mixed = some already in, some not. That is the only case where a per-row
+    // marker tells you anything.
+    var mixedHave = newCount > 0 && newCount < paths.length;
+    var lede = newCount
+        ? (newCount === paths.length
+            ? "Tick the ones to bring into the panel."
+            : newCount + " of these " + paths.length + " are not in the panel yet, and are ticked.")
+        : "Every one of these is already in the panel. Tick any you want to read again.";
     var h = '<div class="modal adopt"><div class="modalTitle">Bins in this project</div>' +
-        '<div class="modalBody">Tick the ones to bring into the panel.' +
+        '<div class="modalBody">' + lede +
         (trunc ? " Showing the first " + paths.length + "." : "") + '</div>' +
+        '<div class="adoptFind">' +
+            ICON_SEARCH +
+            '<input class="adoptFindInput" type="text" placeholder="Filter bins…" spellcheck="false" ' +
+            'data-tip="Narrow the list by name.<i>A bin with a match inside it stays visible, and its sub-bins come with it. Escape clears.</i>" />' +
+            '<button class="adoptFindClear" style="display:none;" aria-label="Clear the filter">' + ICON_XSMALL + '</button>' +
+        '</div>' +
+        '<div class="adoptTools">' +
+            '<span class="adoptCount"></span>' +
+            '<button class="adoptAll" data-tip="Tick every bin in the list.">Tick all</button>' +
+            '<button class="adoptNone" data-tip="Tick none of them.">Untick all</button>' +
+            '<button class="adoptFoldAll">' + ICON_FOLD + '<span>Fold all</span></button>' +
+        '</div>' +
         '<div class="adoptList">';
+    /* Which paths have anything beneath them. A project read back can be twenty
+     * versions deep, and a flat list of all of it is a scroll, not a choice. */
+    var hasKids = {};
+    for (var hk = 0; hk < paths.length; hk++) {
+        var cut = paths[hk].lastIndexOf("\t");
+        if (cut > 0) hasKids[paths[hk].substring(0, cut)] = true;
+    }
     for (var j = 0; j < paths.length; j++) {
         var segs = paths[j].split("\t");
         var fol = folderOf[paths[j]];
-        // Show what each bin will be linked to. A bin with no folder is the one
-        // you'll have to finish by hand, so it says so rather than looking blank.
-        h += '<label class="adoptRow" style="padding-left:' + ((segs.length - 1) * 14) + 'px">' +
-            '<input type="checkbox" checked data-path="' + esc(paths[j]) + '">' +
+        var pth = esc(paths[j]);
+        // The chevron sits OUTSIDE the label. Inside it, clicking to fold would
+        // also activate the checkbox, because that is what a label does.
+        h += '<div class="adoptRow' + (have[paths[j]] ? " have" : "") +
+            '" data-path="' + pth + '" data-depth="' + (segs.length - 1) +
+            '" style="padding-left:' + ((segs.length - 1) * 14) + 'px">' +
+            (hasKids[paths[j]]
+                ? '<button class="adoptChev" data-path="' + pth + '" aria-label="Fold this bin">' + ICON_CHEV + '</button>'
+                // No second class here. A leaf used to carry "spacer" as well,
+                // which picked up a global .spacer { flex: 1 } defined later in
+                // the sheet — so the blank grew to fill the row and pushed the
+                // whole leaf a couple of hundred pixels right.
+                : '<span class="adoptChev"></span>') +
+            '<label class="adoptLabel">' +
+            '<input type="checkbox"' + (chosen[paths[j]] ? ' checked' : '') +
+                ' data-path="' + pth + '">' +
             '<span>' + esc(segs[segs.length - 1]) + '</span>' +
+            // Show what each bin will be linked to. A bin with no folder is the
+            // one you'll have to finish by hand, so it says so rather than
+            // looking blank.
+            // Only worth saying when it distinguishes this row from another. On a
+            // project where every bin is already in, the lede says so once and
+            // 370 identical tags just eat the width the names need.
+            (have[paths[j]] && mixedHave ? '<span class="adoptHave">in panel</span>' : '') +
             (fol ? '<span class="adoptFol" title="' + esc(fol) + '">' + esc(folderLeaf(fol)) + '</span>'
                  : '<span class="adoptFol none">no folder</span>') +
-            '</label>';
+            '</label></div>';
     }
     h += '</div><div class="modalBtns">' +
-        '<button class="mbtn ghost adoptNone">Untick all</button>' +
         '<button class="mbtn adoptGo">Add</button></div>' +
         '<button class="modalCancel">Cancel</button></div>';
     ov.innerHTML = h;
@@ -4270,9 +4482,14 @@ function showAdoptDialog(recs, trunc) {
                 var path = box.getAttribute("data-path");
                 chosen[path] = box.checked;
                 if (box.checked) {
-                    // tick every ancestor — the path is the address
+                    // every ancestor — the path is the address
                     var segs = path.split("\t");
                     for (var d = 1; d < segs.length; d++) setBox(segs.slice(0, d).join("\t"), true);
+                    // and everything beneath it
+                    for (var e = 0; e < boxes.length; e++) {
+                        var q = boxes[e].getAttribute("data-path");
+                        if (q.indexOf(path + "\t") === 0) { boxes[e].checked = true; chosen[q] = true; }
+                    }
                 } else {
                     // unticking a parent unticks everything beneath it
                     for (var c = 0; c < boxes.length; c++) {
@@ -4280,24 +4497,185 @@ function showAdoptDialog(recs, trunc) {
                         if (p.indexOf(path + "\t") === 0) { boxes[c].checked = false; chosen[p] = false; }
                     }
                 }
+                syncGo();
             });
         })(boxes[k]);
     }
 
+    /* ---------- folding ----------
+     *
+     * A row is hidden when ANY ancestor is folded, not just its parent — folding
+     * "Source" has to take the whole branch, however deep. Folding never touches
+     * a tick: what you have chosen survives being hidden, which is why Add reads
+     * `chosen` rather than what is on screen.
+     */
+    var folded = {};
+    var rowEls = ov.querySelectorAll(".adoptRow");
+    function isHidden(path) {
+        var segs = String(path).split("\t");
+        for (var d = 1; d < segs.length; d++) {
+            if (folded[segs.slice(0, d).join("\t")]) return true;
+        }
+        return false;
+    }
+    function applyFold() {
+        for (var r = 0; r < rowEls.length; r++) {
+            var pth = rowEls[r].getAttribute("data-path");
+            // While filtering the fold state is ignored, so a match cannot be
+            // hidden inside a folded parent and look like a miss.
+            var hide = visible ? !visible[pth] : isHidden(pth);
+            rowEls[r].style.display = hide ? "none" : "";
+            var ch = rowEls[r].querySelector(".adoptChev");
+            if (ch) ch.classList.toggle("closed", !visible && !!folded[pth]);
+        }
+        syncFoldAll();
+        syncGo();
+    }
+    /* ---------- filtering ----------
+     *
+     * Same rule as the bin structure's search, so there is one behaviour to
+     * learn: a bin whose name matches stays, its ancestors stay so it can still
+     * be read as a path, and its sub-bins come with it — asking for "Kling" and
+     * getting it without its versions would be the wrong answer.
+     *
+     * Filtering ignores the fold state rather than fighting it: a match hidden
+     * inside a folded parent would look like the filter had missed it. Folding
+     * comes back exactly as it was when the filter is cleared.
+     */
+    var filterTerm = "";
+    var findInput = ov.querySelector(".adoptFindInput");
+    var findClear = ov.querySelector(".adoptFindClear");
+    var visible = null;                  // null when not filtering
+    function computeVisible() {
+        if (!filterTerm) { visible = null; return; }
+        var direct = {}, i2;
+        for (i2 = 0; i2 < paths.length; i2++) {
+            if (paths[i2].split("\t").pop().toLowerCase().indexOf(filterTerm) >= 0) direct[paths[i2]] = true;
+        }
+        visible = {};
+        for (i2 = 0; i2 < paths.length; i2++) {
+            var segs = paths[i2].split("\t"), keep = !!direct[paths[i2]], d;
+            // a sub-bin of a match comes with it
+            for (d = 1; d < segs.length && !keep; d++) if (direct[segs.slice(0, d).join("\t")]) keep = true;
+            if (!keep) continue;
+            visible[paths[i2]] = true;
+            // and the path above it, so the match can be placed
+            for (d = 1; d < segs.length; d++) visible[segs.slice(0, d).join("\t")] = true;
+        }
+    }
+
+    var foldAllBtn = ov.querySelector(".adoptFoldAll");
+    function anyOpen() {
+        for (var a = 0; a < paths.length; a++) if (hasKids[paths[a]] && !folded[paths[a]]) return true;
+        return false;
+    }
+    function syncFoldAll() {
+        var open = anyOpen();
+        foldAllBtn.querySelector("span").textContent = open ? "Fold all" : "Unfold all";
+        foldAllBtn.classList.toggle("allFolded", !open);
+        // Nothing nested: the control would be a button that does nothing.
+        var anyNested = false;
+        for (var n2 = 0; n2 < paths.length; n2++) if (hasKids[paths[n2]]) { anyNested = true; break; }
+        foldAllBtn.style.display = anyNested ? "flex" : "none";
+        foldAllBtn.disabled = !!filterTerm;
+        foldAllBtn.classList.toggle("off", !!filterTerm);
+        foldAllBtn.setAttribute("data-tip", filterTerm
+            ? "Clear the filter first — matching bins are shown for you."
+            : open
+                ? "Fold every bin in this list.<i>Folding hides rows; it never changes what is ticked.</i>"
+                : "Open every bin in this list again.");
+    }
+    for (var cv = 0; cv < rowEls.length; cv++) {
+        (function (btn) {
+            if (!btn || btn.tagName !== "BUTTON") return;
+            btn.onclick = function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var pth = btn.getAttribute("data-path");
+                if (folded[pth]) delete folded[pth]; else folded[pth] = true;
+                applyFold();
+            };
+        })(rowEls[cv].querySelector(".adoptChev"));
+    }
+    foldAllBtn.onclick = function (e) {
+        e.preventDefault();
+        if (foldAllBtn.disabled) return;
+        // Anything still open folds, so one press always tidies.
+        var open = anyOpen();
+        folded = {};
+        if (open) for (var f2 = 0; f2 < paths.length; f2++) if (hasKids[paths[f2]]) folded[paths[f2]] = true;
+        applyFold();
+    };
+
+    /* The button carries the count, so what Add is about to do is readable
+     * before pressing it, and it goes inert at zero rather than closing the
+     * dialog and then reporting that nothing happened. */
+    var goBtn = ov.querySelector(".adoptGo");
+    var countEl = ov.querySelector(".adoptCount");
+    function tickedCount() {
+        var n = 0;
+        for (var i2 = 0; i2 < paths.length; i2++) if (chosen[paths[i2]]) n++;
+        return n;
+    }
+    function shownCount() {
+        if (!visible) return paths.length;
+        var k = 0;
+        for (var i3 = 0; i3 < paths.length; i3++) if (visible[paths[i3]]) k++;
+        return k;
+    }
+    function syncGo() {
+        var n = tickedCount();
+        goBtn.textContent = n ? ("Add " + n + " bin" + (n === 1 ? "" : "s")) : "Add";
+        goBtn.disabled = !n;
+        goBtn.classList.toggle("off", !n);
+        // The count is of the whole list, not of what the filter shows — Add
+        // adopts what is ticked, filtered out or not, and it has to say so.
+        countEl.textContent = n + " of " + paths.length + " ticked" +
+            (filterTerm ? " · showing " + shownCount() : "");
+    }
+
     function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
     ov.querySelector(".modalCancel").onclick = close;
-    ov.querySelector(".adoptNone").onclick = function () {
-        for (var n = 0; n < boxes.length; n++) { boxes[n].checked = false; chosen[boxes[n].getAttribute("data-path")] = false; }
-    };
-    ov.querySelector(".adoptGo").onclick = function () {
+    /* Tick all / Untick all act on the WHOLE list, not on what the filter shows.
+     * A control that quietly means "all of the eleven you can see" is how you
+     * adopt three hundred bins by accident. */
+    function setAll(on) {
+        for (var n = 0; n < boxes.length; n++) {
+            boxes[n].checked = on;
+            chosen[boxes[n].getAttribute("data-path")] = on;
+        }
+        syncGo();
+    }
+    ov.querySelector(".adoptNone").onclick = function () { setAll(false); };
+    ov.querySelector(".adoptAll").onclick = function () { setAll(true); };
+
+    function applyFilter() {
+        filterTerm = findInput.value.replace(/^\s+|\s+$/g, "").toLowerCase();
+        findClear.style.display = filterTerm ? "flex" : "none";
+        computeVisible();
+        applyFold();
+    }
+    findInput.addEventListener("input", applyFilter);
+    findInput.addEventListener("keydown", function (e) {
+        // Escape clears rather than closing the dialog: losing 370 tick states
+        // to a keystroke meant for the filter box would be a bad trade.
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); findInput.value = ""; applyFilter(); }
+    });
+    findClear.onclick = function () { findInput.value = ""; applyFilter(); findInput.focus(); };
+    goBtn.onclick = function () {
+        if (goBtn.disabled) return;
         var keep = [];
         for (var m = 0; m < paths.length; m++) {
             if (chosen[paths[m]]) keep.push({ path: paths[m], folder: folderOf[paths[m]] });
         }
         close();
-        if (!keep.length) { setStatus("Nothing selected.", ""); return; }
         adoptPaths(keep);
     };
+    syncGo();
+    applyFold();
+    // No wireTips() here: it is a document-level delegated listener, so a
+    // data-tip on a node added later already works. Calling it again would
+    // register a second copy of every handler.
 }
 
 // Merge into the existing tree rather than replacing it: a bin that's already
@@ -4670,8 +5048,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // main view
     document.getElementById("importBtn").onclick = importAll;
-    document.getElementById("setupBtn").onclick = readProjectBins;
-    document.getElementById("addBinBtn").onclick = addTopBin;
     document.getElementById("treeHeader").onclick = toggleCollapsed;
     // Sits inside that header, so it has to keep its click to itself or folding
     // the bins would fold the whole section away underneath them. Assigned, not

@@ -184,11 +184,6 @@ button { font-family: inherit; cursor: pointer; }
 .navBtn:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
 .navBtn svg { width: 15px; height: 15px; }
 
-/* "set up from this project" — accented so it reads as an action, not a setting.
-   Icon only: at 300px a second labelled pill next to Import does not fit, and the
-   project name has to keep enough room to ellipsise rather than push things out. */
-.setupBtn { color: var(--accent); }
-.setupBtn:hover { color: #5aa9f0; background: rgba(45, 140, 235, 0.14); }
 
 /* which folder each bin will be linked to, in the scan dialog */
 .adoptFol {
@@ -356,7 +351,9 @@ button { font-family: inherit; cursor: pointer; }
     font-size: 11px; text-align: left; white-space: nowrap; overflow: hidden;
 }
 .tilePalette .swAct.wide { grid-column: span 8; }
-.tilePalette .swAct.danger { color: var(--danger); }
+/* --danger measures 4.41:1 on this palette's lighter background — under the
+   floor, on the one destructive item in the menu. Lifted just past it. */
+.tilePalette .swAct.danger { color: #f4877f; }
 .tilePalette .swAct.danger:hover { background: rgba(240, 115, 107, 0.16); }
 .tilePalette .swAct:hover { background: rgba(255, 255, 255, 0.12); }
 .tilePalette .swAct svg { width: 13px; height: 13px; flex: none; }
@@ -514,7 +511,7 @@ body.depthCues .trow[data-depth="6"]::after {
 .trow .tchev:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
 .trow .tchev svg { width: 12px; height: 12px; transition: transform 0.15s; }
 .trow .tchev.closed svg { transform: rotate(-90deg); }
-.trow .tchev.spacer { pointer-events: none; }
+.trow .tchev.blank { pointer-events: none; }
 .trow .ticon { flex: none; display: flex; color: var(--accent); cursor: grab; }
 .trow .ticon:active { cursor: grabbing; }
 .trow .ticon svg { width: 15px; height: 15px; pointer-events: none; }
@@ -550,20 +547,129 @@ body.depthCues .trow[data-depth="6"]::after {
 /* pin dot when a bin is pinned */
 .trow .pinDot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
-/* --- "bins in this project" tick list --- */
-.modal.adopt { max-width: 262px; text-align: left; }
+/* --- "bins in this project" tick list ---
+   Sized to the panel, not to a number picked once.
+   - width grows with a wide dock and still fits a 300px one;
+   - the modal is a column capped at the viewport, and the LIST is the only part
+     that scrolls, so Add and Cancel can never be pushed out of reach. That was
+     the real bug: a fixed 240px list plus header and buttons is taller than a
+     short docked panel, and the button you need is the one that goes missing. */
+.modal.adopt {
+    /* 360, not 420: at a ~450px panel the wider cap put the dialog edge to edge
+       with nothing around it, which is what made it read as mis-scaled. */
+    max-width: 360px; text-align: left;
+    /* The OVERLAY's content box, not vh. .modalOv is inset:0 with 20px padding,
+       so 100% here is "the panel minus that margin" — computed from a real box
+       rather than from a viewport unit, which is one less thing to be wrong
+       inside CEF. min-height:0 is what lets the list scroll instead of the
+       modal growing past it. */
+    max-height: 100%; min-height: 0;
+    display: flex; flex-direction: column;
+}
+.modal.adopt .modalTitle, .modal.adopt .modalBody { flex: none; }
+.modal.adopt .modalBtns, .modal.adopt .modalCancel { flex: none; }
+/* The list is the content; everything else is chrome and should say less. */
+.modal.adopt .modalTitle { margin-bottom: 3px; }
+.modal.adopt .modalBody { margin-bottom: 8px; }
+/* Two half-width buttons at 360px are 170px each, which is a lot of button for
+   "Untick all". Natural width, right-aligned, primary last. */
+.modal.adopt .modalBtns { justify-content: flex-end; }
+.modal.adopt .mbtn { flex: 0 1 auto; min-width: 92px; padding: 8px 14px; }
+.modal.adopt .modalCancel { align-self: flex-end; margin-top: 8px; }
 .adoptList {
-    max-height: 240px; overflow-y: auto; margin: 4px 0 12px;
+    /* Takes every pixel the chrome does not need, and is the only thing that
+       scrolls. min-height:0 over a fixed floor: a floor taller than the space
+       available is how the buttons got pushed out of reach in the first place. */
+    flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; margin: 4px 0 12px;
     border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 5px;
 }
+/* Nothing ticked: Add would close the dialog and then report that it did
+   nothing, which is a worse answer than a button that says it is not ready. */
+.mbtn.off { opacity: 0.4; cursor: default; }
+.mbtn.off:hover { filter: none; }
+/* Filter box, built like the bin structure's so there is one thing to learn. */
+.adoptFind {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 8px; margin-bottom: 8px; border-radius: 7px;
+    background: rgba(255, 255, 255, 0.045);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.adoptFind:focus-within { border-color: rgba(45, 140, 235, 0.55); background: rgba(255, 255, 255, 0.06); }
+.adoptFindIco { width: 13px; height: 13px; flex: none; color: var(--text-3); }
+.adoptFindInput {
+    flex: 1; min-width: 0; background: transparent; border: none; outline: none;
+    color: var(--text); font-size: 11.5px; font-family: inherit; padding: 1px 0;
+}
+.adoptFindClear {
+    flex: none; display: flex; padding: 2px; border: none; border-radius: 4px;
+    background: transparent; color: var(--text-3);
+}
+.adoptFindClear svg { width: 11px; height: 11px; }
+.adoptFindClear:hover { color: #f0f0f4; background: rgba(255, 255, 255, 0.08); }
+
+/* A thin row above the list: what is ticked on the left, the list's own controls
+   on the right. These belong to the list, not to the commit, so they sit here
+   and the button row is left holding only Add. Wraps rather than squeezing the
+   count to nothing on a narrow dock. */
+.adoptTools {
+    display: flex; align-items: center; gap: 6px;
+    margin: 2px 0 6px; min-height: 20px; flex-wrap: wrap;
+}
+.adoptCount { flex: 1 0 100%; min-width: 0; font-size: 10.5px; color: var(--text-3); }
+.adoptTools button {
+    flex: none; display: flex; align-items: center; gap: 5px;
+    padding: 3px 8px; border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.10);
+    color: var(--text-2); font-family: inherit; font-size: 10.5px; transition: 0.12s;
+}
+.adoptTools button svg { width: 12px; height: 12px; flex: none; }
+.adoptTools button:hover { color: #f0f0f4; background: rgba(255, 255, 255, 0.09); border-color: rgba(255, 255, 255, 0.18); }
+.adoptFoldAll { margin-left: auto; }
+.adoptFoldAll.allFolded { color: var(--accent); border-color: rgba(45, 140, 235, 0.45); }
+/* Inert while a filter is on: matching bins are already shown. */
+.adoptTools button.off { opacity: 0.4; cursor: default; }
+.adoptTools button.off:hover { color: var(--text-2); background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.10); }
+
+/* Already in the panel: adopting it again is harmless but is not what you came
+   for, so it is quieter and says why it is not ticked. */
+.adoptRow.have { opacity: 0.72; }
+.adoptHave {
+    /* --text-3 measured 3.94:1 on this chip, under the 4.5 floor at 9.5px.
+       --text-2 on the same background is 4.7. */
+    flex: none; font-size: 9.5px; color: var(--text-2);
+    padding: 1px 5px; border-radius: 8px;
+    background: rgba(255, 255, 255, 0.07);
+}
+
 .adoptRow {
-    display: flex; align-items: center; gap: 7px;
-    padding: 5px 6px; border-radius: 5px; cursor: pointer;
+    display: flex; align-items: center; gap: 5px;
+    padding: 5px 6px; border-radius: 5px;
     font-size: 11.5px; color: var(--text);
 }
 .adoptRow:hover { background: rgba(255, 255, 255, 0.05); }
+/* The label fills the row, so clicking anywhere except the chevron still
+   toggles the tick — which is what the row used to be as a whole. */
+.adoptLabel { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; cursor: pointer; }
+/* The bin name is what you are choosing between, so it gets the room and the
+   folder column gives way rather than the other way round. */
+.adoptLabel > span:first-of-type { flex: 1 1 auto; min-width: 0; }
+.adoptRow .adoptFol { flex: 0 1 auto; min-width: 0; max-width: 40%; }
 .adoptRow input { flex: none; accent-color: var(--accent); margin: 0; }
 .adoptRow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Folding this bin. Outside the label on purpose: inside it, a click here would
+   also flip the checkbox. */
+/* Two classes deep on purpose. As a single class this lost `flex: none` to a
+   generic .spacer { flex: 1 } declared later in the sheet, and the blank on a
+   leaf row grew to fill the row — which is why sub-bins appeared hundreds of
+   pixels to the right of their parents. */
+.adoptRow .adoptChev {
+    flex: none; width: 15px; height: 15px; padding: 0; border: none; border-radius: 4px;
+    background: transparent; color: var(--text-3);
+    display: flex; align-items: center; justify-content: center; transition: 0.12s;
+}
+.adoptRow .adoptChev svg { width: 11px; height: 11px; transition: transform 0.15s; }
+.adoptRow .adoptChev.closed svg { transform: rotate(-90deg); }
+.adoptRow button.adoptChev:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
 .mbtn.ghost { background: rgba(255, 255, 255, 0.07); color: var(--text); }
 .mbtn.ghost:hover { background: rgba(255, 255, 255, 0.12); }
 
@@ -689,6 +795,17 @@ body.depthCues .trow[data-depth="6"]::after {
     font-size: 10px; color: var(--text-3); margin: 0 0 5px 19px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     border-bottom: 1px dotted rgba(255, 255, 255, 0.14); display: inline-block; max-width: 100%;
+    transition: color 0.12s, border-color 0.12s;
+}
+/* Clicking it opens the folder — checking where the files came from is the
+   reason to be looking at this at all. */
+.logFrom.clickable { cursor: pointer; }
+.logFrom.clickable:hover { color: var(--accent); border-bottom-color: var(--accent); }
+/* A folder that has moved since. Not clickable, because opening it would do
+   nothing and look like the click was ignored. */
+.logFrom.gone {
+    color: var(--danger); border-bottom-style: dashed;
+    border-bottom-color: rgba(240, 115, 107, 0.5); cursor: default;
 }
 .logFile {
     display: flex; align-items: center; gap: 6px;
@@ -710,6 +827,24 @@ body.depthCues .trow[data-depth="6"]::after {
     font-size: 11px; color: #e8968f; line-height: 1.45; margin-bottom: 7px;
 }
 .logErr svg { width: 13px; height: 13px; flex: none; margin-top: 1px; }
+
+/* Files Premiere refused. Not folded away like the quiet bins: pressing Import
+   again will fail the same way, so this is the one thing here that needs doing
+   something about. */
+.logRefused {
+    display: flex; align-items: flex-start; gap: 7px;
+    padding: 8px 9px; margin: 2px 0 8px; border-radius: 7px;
+    background: rgba(240, 115, 107, 0.09);
+    border: 1px solid rgba(240, 115, 107, 0.26);
+    font-size: 11px; color: #e8a8a2; line-height: 1.45;
+}
+.logRefused svg { width: 14px; height: 14px; flex: none; margin-top: 1px; color: var(--danger); }
+.logRefused b { color: #f0b8b2; font-weight: 600; }
+.logRefusedName {
+    font-size: 11px; color: #f0f0f4; margin-top: 3px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.logRefusedWhy { font-size: 10.5px; color: var(--text-3); margin-top: 5px; }
 
 /* Bins that came back empty. One sentence each, and when there are several,
    one line that opens them — eighteen of these is what made the old view
@@ -892,8 +1027,10 @@ body.depthCues .trow[data-depth="6"]::after {
 
 /* the two setup actions sit side by side, equal weight */
 
-/* pushes the create button to the bottom */
-.spacer { flex: 1; min-height: 8px; }
+/* Pushes the create button to the bottom of the preset builder. Named for what
+   it does rather than what it is: as ".spacer" it was a single-class rule any
+   component could pick up as a second class and be reshaped by. */
+.pushDown { flex: 1; min-height: 8px; }
 
 /* --- primary create button --- */
 .createBtn {
@@ -945,7 +1082,22 @@ body.depthCues .trow[data-depth="6"]::after {
 .modalTitle { font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
 .modalBody { font-size: 11px; color: var(--text-2); line-height: 1.5; margin-bottom: 14px; }
 .modalBtns { display: flex; gap: 8px; }
-.mbtn { flex: 1; padding: 9px; border-radius: 7px; border: none; font-size: 12px; font-weight: 600; color: #fff; transition: 0.12s; }
+/* A background on the base, not only on the variants. Without one, a .mbtn with
+   no variant fell through to Chromium's native button — light grey with the
+   white text this rule sets, which is how "Add 7 bins" ended up looking
+   disabled while it was the primary action on screen. */
+.mbtn {
+    flex: 1; padding: 9px; border-radius: 7px; border: none;
+    background: rgba(255, 255, 255, 0.10); color: #fff;
+    font-size: 12px; font-weight: 600; transition: 0.12s;
+}
+.mbtn:hover { background: rgba(255, 255, 255, 0.15); }
+/* The commit action, in the same blue as Import — the panel has one primary
+   colour and this is it. */
+.mbtn.adoptGo { background-color: var(--accent-2); }
+.mbtn.adoptGo:hover { background: #3d97ee; }
+.mbtn.adoptGo:active { transform: translateY(1px); }
+.mbtn.adoptGo.off, .mbtn.adoptGo.off:hover { background-color: var(--accent-2); }
 .mbtn.keep { background: var(--accent); }
 .mbtn.keep:hover { background: #4a9bef; }
 .mbtn.replace { background: var(--danger); }
