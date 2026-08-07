@@ -22,7 +22,7 @@ var cs = new CSInterface();
 // Bump this AND ExtensionBundleVersion in CSXS/manifest.xml together — the
 // shareable-zip script fails the build if the two ever disagree, because
 // "which version are you on?" has to have one answer.
-var VERSION = "1.3.10";
+var VERSION = "1.3.11";
 
 /*
  * What Import picks up. A format missing from here is skipped in silence — the
@@ -370,6 +370,9 @@ function normalize(nodes) {
         }
         if (typeof n.color !== "string") n.color = "";
         if (typeof n.pinned !== "boolean") n.pinned = false;
+        // Absent means included, so an existing tree needs no migration and the
+        // saved JSON only grows for the bins actually switched off.
+        if (n.skip !== true) delete n.skip;
         if (n.pinIdx != null && typeof n.pinIdx !== "number") delete n.pinIdx;
         if (!n.children) n.children = [];
         normalize(n.children);
@@ -496,6 +499,72 @@ function watchPanelWidth() {
 }
 function expandTree() { localStorage.setItem(COLLAPSE_KEY, "0"); applyCollapsed(); }
 
+/* ---------- switching a bin out of Import ----------
+ *
+ * node.skip is a property of the bin, saved with the tree, so it survives
+ * restarts and means "from now on, leave this one alone" — which is a different
+ * thing from the Option-click picker, and the two are kept apart deliberately:
+ * the toggle is permanent, the picker is one run.
+ *
+ * Toggling cascades DOWN, both ways: switching a bin off takes its whole branch
+ * with it, switching it on brings the branch back. It does not cascade up — a
+ * single sub-bin can be switched off without its parent changing — so a parent
+ * with a mixed branch beneath it draws as indeterminate rather than lying about
+ * being fully on.
+ */
+function setSkip(node, off) {
+    node.skip = off ? true : undefined;
+    if (!off) delete node.skip;
+    (function rec(n) {
+        var kids = n.children || [];
+        for (var i = 0; i < kids.length; i++) {
+            if (off) kids[i].skip = true; else delete kids[i].skip;
+            rec(kids[i]);
+        }
+    })(node);
+}
+/* on / off / mixed, for what the control should draw. */
+function skipState(node) {
+    if (node.skip) return "off";
+    var on = 0, off = 0;
+    (function rec(n) {
+        var kids = n.children || [];
+        for (var i = 0; i < kids.length; i++) {
+            if (kids[i].skip) off++; else on++;
+            rec(kids[i]);
+        }
+    })(node);
+    return off ? (on ? "mixed" : "off") : "on";
+}
+/* Skipped by itself OR by anything above it. The cascade keeps these in step,
+ * but a bin mirrored in later under a switched-off parent would arrive without
+ * the flag, and importing into it would be exactly what was asked not to happen. */
+function skippedNodes() {
+    var out = new Map();
+    (function walk(arr, under) {
+        for (var i = 0; i < arr.length; i++) {
+            var n = arr[i], off = under || !!n.skip;
+            if (off) out.set(n, true);
+            if (n.children && n.children.length) walk(n.children, off);
+        }
+    })(treeData || [], false);
+    return out;
+}
+function toggleSkip(node) {
+    var was = skipState(node);
+    // Anything still on switches off, so one click on a parent always silences
+    // the branch; only a fully-off branch comes back.
+    var off = was !== "off";
+    pushUndo((off ? "switching off " : "switching on ") + "“" + node.name + "”");
+    setSkip(node, off);
+    saveTree();
+    renderAll();
+    var n = 0;
+    skippedNodes().forEach(function () { n++; });
+    setStatus(off ? "“" + node.name + "” won’t be imported." + (n > 1 ? " (" + n + " off in total)" : "")
+                  : "“" + node.name + "” is back in.", "ok");
+}
+
 /* ---------- telling a bin from a sub-bin at a glance ----------
  *
  * Before this, the only difference between the two was 16px of indent and one
@@ -575,14 +644,40 @@ function syncFoldBtn() {
 //  RENDER (main view)
 // ====================================================================
 function renderAll() {
+    /* Hold the scroll position across the rebuild.
+     *
+     * renderTree() empties #treeList before refilling it, and for that instant
+     * the page is short enough that the browser clamps scrollTop to 0. Refilling
+     * restores the height but not the position, so every action that re-renders
+     * while you are scrolled down threw you back to the top — switching a bin
+     * off, pinning one, recolouring, undoing.
+     *
+     * Restored only when it actually collapsed to 0 from somewhere else. A
+     * deliberate scroll to any other position is left alone, so this cannot
+     * fight code that means to move the view.
+     */
+    var se = scrollHost();
+    var keep = se ? se.scrollTop : 0;
+
+    // The tree can change while a filter is on — a bin renamed, mirrored or
+    // undone — and a stale set of rows-to-draw outlives the tree it described.
+    if (searchTokens.length) computeSearch();
     renderPinned();
     renderTree();
     applyCollapsed();
     applyDepthCues();
+    syncAutoImportLabel();
     syncContentsView();
     var total = 0;
     forEachNode(function () { total++; });
     syncSearchCount(flatRows.length, total);
+
+    if (se && keep > 0 && se.scrollTop === 0) {
+        se.scrollTop = keep;
+        // CEF finishes laying the refilled list out after this returns on some
+        // builds, and until it has, the assignment is clamped all over again.
+        setTimeout(function () { if (keep > 0 && se.scrollTop === 0) se.scrollTop = keep; }, 0);
+    }
 }
 
 /* ============================ BIN CONTENTS ============================
@@ -1862,7 +1957,8 @@ function wireSearch() {
         var se = document.scrollingElement || document.documentElement;
         var y = se ? se.scrollTop : 0;
         var was = searchTerm;
-        searchTerm = inp.value.replace(/^\s+|\s+$/g, "").toLowerCase();
+        // setSearchTerm also re-tokenises and recomputes which rows are drawn.
+        setSearchTerm(inp.value);
 
         if (!was && searchTerm && list) heldHeight = list.offsetHeight;
         if (!searchTerm) heldHeight = 0;
@@ -1888,22 +1984,217 @@ function syncSearchCount(shownBins, totalBins) {
 }
 
 
+/* ============================ search =============================
+ *
+ * "kling v1" means the v1 inside Kling, not every bin called v1.
+ *
+ * So the query is tokens matched IN ORDER down one path: some segment matches
+ * "kling", and a deeper segment in the same path matches "v1". Order carries
+ * meaning — "1x kling" is a different question and gets a different answer.
+ * The LAST token has to match the bin's own name, because that is the bin being
+ * named; everything above it is context.
+ *
+ * Spelling is forgiving, but not evenly. On a long word a dropped or swapped
+ * letter is obviously a typo. On "v1" it is a different bin: edit-distance-1
+ * makes v1 match v2, and 1x match 2x, and this project has v1 v2 v3 and
+ * 13x…18x. So short tokens get no fuzz at all — and if a bin called exactly
+ * "1x" exists, "1x" means that one and stops matching 11x and 21x.
+ */
 var searchTerm = "";
-function matchesSearch(name) {
-    if (!searchTerm) return true;
-    return String(name).toLowerCase().indexOf(searchTerm) >= 0;
-}
-/* A node survives the filter if it matches, or if anything beneath it does —
- * otherwise searching for a sub-bin would hide the parents and leave the result
- * floating at the wrong indent, which reads as the wrong bin entirely. */
-function subtreeMatches(node) {
-    if (matchesSearch(node.name)) return true;
-    if (!node.children) return false;
-    for (var i = 0; i < node.children.length; i++) {
-        if (subtreeMatches(node.children[i])) return true;
+var searchTokens = [];
+var searchHits = null;      // pathKey -> score, or null when not searching
+var searchShow = null;      // pathKey -> true for every row to draw
+
+var FUZZ_MIN = 4;           // below this, a "typo" is usually a different bin
+
+/* Diacritics folded, so "dong" finds "động". Half this project's filenames are
+ * Vietnamese and nobody types the accents into a search box. */
+function foldText(v) {
+    var t = String(v).toLowerCase();
+    if (t.normalize) {
+        try { t = t.normalize("NFD").replace(/[\u0300-\u036f]/g, ""); } catch (e) {}
     }
-    return false;
+    // đ is a letter in its own right, not a base plus a mark, so NFD leaves it.
+    return t.replace(/\u0111/g, "d");
 }
+/* A bin name, folded and split into words, memoised.
+ *
+ * Worth caching for two reasons: names repeat heavily — this project has twelve
+ * bins called Draft and twelve called v1 — and a name gets folded once per
+ * descendant that has to look past it, so a bin five deep used to refold all
+ * five of its ancestors. Keyed by the raw name, so a rename simply misses and
+ * fills a new entry rather than needing invalidation.
+ */
+var foldCache = {}, foldCacheN = 0;
+function foldWords(name) {
+    var hit = foldCache[name];
+    if (hit) return hit;
+    var parts = foldText(name).split(/\s+/), out = [];
+    for (var i = 0; i < parts.length; i++) if (parts[i]) out.push(parts[i]);
+    // Bounded: distinct bin names are few, but a long session of renames should
+    // not grow this without limit.
+    if (foldCacheN > 4000) { foldCache = {}; foldCacheN = 0; }
+    foldCache[name] = out; foldCacheN++;
+    return out;
+}
+function parseSearch(raw) {
+    var parts = String(raw).split(/\s+/), out = [];
+    for (var i = 0; i < parts.length; i++) {
+        var t = foldText(parts[i]);
+        if (t) out.push({ t: t, short: t.length < FUZZ_MIN, exactOnly: false });
+    }
+    return out;
+}
+/* Letters in order, gaps allowed: "klng" -> Kling. */
+function isSubseq(needle, hay) {
+    var i = 0;
+    for (var j = 0; j < hay.length && i < needle.length; j++) if (hay.charAt(j) === needle.charAt(i)) i++;
+    return i === needle.length;
+}
+/* One edit apart, counting an adjacent swap as one.
+ *
+ * Plain Levenshtein calls a transposition two edits, which would reject "kilng"
+ * and "runwya" — the two most common ways to mistype a word. Bailing on a length
+ * gap of 2 first keeps this cheap enough to run per word per keystroke. */
+function within1Edit(a, b) {
+    var la = a.length, lb = b.length;
+    if (Math.abs(la - lb) > 1) return false;
+    var i = 0, j = 0, seen = 0;
+    while (i < la && j < lb) {
+        if (a.charAt(i) === b.charAt(j)) { i++; j++; continue; }
+        if (++seen > 1) return false;
+        if (la === lb && a.charAt(i) === b.charAt(j + 1) && a.charAt(i + 1) === b.charAt(j)) {
+            i += 2; j += 2;                  // an adjacent swap, counted once
+        } else if (la > lb) i++;
+        else if (lb > la) j++;
+        else { i++; j++; }
+    }
+    if (i < la || j < lb) seen++;
+    return seen <= 1;
+}
+/* How well one token matches one path segment. 0 is no match; bigger is better,
+ * so the best interpretation of a query can be ranked first. */
+function segScore(tok, seg) {
+    if (seg === tok.t) return 100;
+    if (tok.exactOnly) return 0;
+    if (tok.short) return seg.indexOf(tok.t) >= 0 ? 40 : 0;
+    if (seg.indexOf(tok.t) === 0) return 80;
+    if (seg.indexOf(tok.t) >= 0) return 60;
+    if (isSubseq(tok.t, seg)) return 35;
+    if (within1Edit(tok.t, seg)) return 25;
+    return 0;
+}
+/* Score the path the walk is currently standing on.
+ *
+ * `words` is the folded words of every segment from the root down to here, used
+ * as a stack by computeSearch — so this reads it in place rather than building a
+ * per-node array. `segStart` is where this bin's OWN words begin.
+ *
+ * Words, not segments, because a bin name can contain a space: "Chuyển động" is
+ * one bin, and "chuyen dong" has to be able to name it. Matching per-segment
+ * made that impossible — three tokens can never fit two segments.
+ *
+ * The last token has to land in this bin's own words; that is what makes the
+ * query name this bin rather than one of its ancestors. Because words run in
+ * path order, "earlier token" and "higher up the path" are the same constraint,
+ * so "kling 1x" cannot match a 1x that is not under a kling.
+ *
+ * Greedy from the end: pin the last token, then let each earlier token take the
+ * deepest word still available. On paths this short that is the same answer an
+ * exhaustive search gives, at a fraction of the cost.
+ */
+function scoreAt(words, segStart) {
+    var toks = searchTokens, nT = toks.length;
+    if (!nT) return 0;
+    var at = -1, total = 0, sc;
+    for (var i = words.length - 1; i >= segStart; i--) {
+        sc = segScore(toks[nT - 1], words[i]);
+        if (sc) { at = i; total = sc; break; }
+    }
+    if (at < 0) return 0;
+    for (var t = nT - 2; t >= 0; t--) {
+        var got = 0;
+        while (--at >= 0) {
+            got = segScore(toks[t], words[at]);
+            if (got) break;
+        }
+        if (!got) return 0;                  // a token with nowhere left to sit
+        total += got;
+    }
+    return total;
+}
+
+function setSearchTerm(raw) {
+    searchTerm = String(raw).replace(/^\s+|\s+$/g, "").toLowerCase();
+    searchTokens = parseSearch(searchTerm);
+    computeSearch();
+}
+
+/* One walk of the tree per search, not four.
+ *
+ * It used to take four passes — one to collect every word, one to score, one to
+ * mark each hit's ancestors, one to mark their descendants — each of which built
+ * a fresh path array and a tab-joined key for every node. Now a single recursive
+ * walk carries the folded words down as a stack and the ancestors as a node
+ * stack, so nothing is rebuilt and no key is ever assembled: the two result sets
+ * are keyed by the node object itself.
+ */
+function computeSearch() {
+    if (!searchTokens.length || !treeData) { searchHits = null; searchShow = null; return; }
+
+    /* A short token that names a bin exactly means THAT bin. Without this, "1x"
+     * also matches 11x and 21x, and the answer to a precise question is a list.
+     * Cheap now that folding is memoised — this walk is almost all cache hits. */
+    var exact = {}, anyShort = false, i;
+    for (i = 0; i < searchTokens.length; i++) if (searchTokens[i].short) anyShort = true;
+    if (anyShort) {
+        (function scan(arr) {
+            for (var a = 0; a < arr.length; a++) {
+                var w = foldWords(arr[a].name);
+                for (var k = 0; k < w.length; k++) exact[w[k]] = true;
+                if (arr[a].children && arr[a].children.length) scan(arr[a].children);
+            }
+        })(treeData);
+    }
+    for (i = 0; i < searchTokens.length; i++) {
+        searchTokens[i].exactOnly = searchTokens[i].short && !!exact[searchTokens[i].t];
+    }
+
+    searchHits = new Map();
+    searchShow = new Map();
+    var words = [];          // folded words, root to here — a stack, reused
+    var segAt = [];          // where each segment's words begin
+    var chain = [];          // the nodes above, so a hit can mark its context
+
+    (function walk(arr, under) {
+        for (var a = 0; a < arr.length; a++) {
+            var node = arr[a], w = foldWords(node.name), k;
+            segAt.push(words.length);
+            for (k = 0; k < w.length; k++) words.push(w[k]);
+            chain.push(node);
+
+            var sc = scoreAt(words, segAt[segAt.length - 1]);
+            var hit = sc > 0;
+            if (hit) {
+                searchHits.set(node, sc);
+                // The path above it, so the match can be placed rather than
+                // floating at an indent that reads as the wrong bin.
+                for (k = 0; k < chain.length; k++) searchShow.set(chain[k], true);
+            } else if (under) {
+                searchShow.set(node, true);
+            }
+            // `under` carries downwards instead of marking each subtree eagerly:
+            // finding a bin hands you the bin AND its contents, in one pass.
+            if (node.children && node.children.length) walk(node.children, hit || under);
+
+            chain.pop();
+            words.length = segAt.pop();
+        }
+    })(treeData, false);
+}
+/* Both take the node itself. Path arrays were only ever built to make a key. */
+function searchDrawn(node) { return !searchShow || searchShow.has(node); }
+function searchIsHit(node) { return !!(searchHits && searchHits.has(node)); }
 
 /* ---- bin structure order ----
  *
@@ -1976,22 +2267,25 @@ function flattenVisible() {
     /* `under` means an ancestor already matched, so everything below it is part
      * of the result: finding a bin should hand you the bin AND its contents,
      * not the bin with its sub-bins mysteriously filtered out of it. */
-    (function walk(arr, depth, chain, under) {
+    (function walk(arr, depth, chain) {
         var ord = orderedChildren(arr, mode);
         for (var k = 0; k < ord.length; k++) {
             var node = ord[k].node, i = ord[k].idx;    // i is the position in arr, not on screen
-            var hit = under || (searchTerm ? matchesSearch(node.name) : false);
-            if (searchTerm && !hit && !subtreeMatches(node)) continue;
+            // computeSearch() already worked out every row to draw, including the
+            // path above each hit and everything below it. Keyed by node, so no
+            // path array is built here either.
+            if (!searchDrawn(node)) continue;
             // While filtering, a bin with a match inside is forced open — the
             // point of a search is to show you the hit, not where it is hidden.
             var forceOpen = searchTerm && node.children && node.children.length;
             var myChain = chain.concat([{ node: node, arr: arr, idx: i }]);
-            out.push({ node: node, depth: depth, arr: arr, idx: i, chain: myChain });
+            out.push({ node: node, depth: depth, arr: arr, idx: i, chain: myChain,
+                       hit: searchIsHit(node) });
             if (node.children && node.children.length && (forceOpen || node.open !== false)) {
-                walk(node.children, depth + 1, myChain, hit);
+                walk(node.children, depth + 1, myChain);
             }
         }
-    })(treeData, 0, [], false);
+    })(treeData, 0, []);
     return out;
 }
 
@@ -2231,6 +2525,12 @@ function makeRow(entry) {
             row.innerHTML =
                 '<span class="tgrip" data-tip="Drag to reorder or re-nest.<i>Drag it up into PINNED to pin it.</i>">' + ICON_GRIP + '</span>' +
                 chev +
+                // Left of the bin, where a tree's include-control belongs.
+                '<button class="tskip ' + skipState(node) + '" data-tip="' +
+                    (node.skip
+                        ? "Switched off — Import skips this bin and everything under it.<i>Click to bring it back.</i>"
+                        : "In Import.<i>Click to switch this bin and everything under it out of Import, until you switch it back.</i>") +
+                    '" aria-label="Include this bin in Import"></button>' +
                 // Filled on top, outline below: shape reads faster than size.
                 '<span class="ticon">' +
                     ((depthCuesOn() && depth === 0) ? ICON_FOLDER_FILLED : ICON_FOLDER) +
@@ -2239,6 +2539,7 @@ function makeRow(entry) {
                 '<span class="tspacer"></span>' +
                 freshBadge + logBtn + chip + pinDot +
                 '<div class="rowMenu">' + menuHTML(acts, node.name) + '</div>';
+            if (node.skip) row.classList.add("skipped");
             if (freshN) row.classList.add("hasNew");
             if (gone) row.classList.add("linkGone");
             else if (unset) row.classList.add("linkUnset");
@@ -2300,7 +2601,8 @@ function makeRow(entry) {
             // drag under the click and the click never lands.
             function rowOwnsClick(t) {
                 return !!(t && t.closest && (t.closest(".tchev") || t.closest(".tchip") ||
-                    t.closest(".tileMenu") || t.closest(".tlog") || t.closest(".newBadge")));
+                    t.closest(".tileMenu") || t.closest(".tlog") || t.closest(".newBadge") ||
+                    t.closest(".tskip")));
             }
             row.addEventListener("click", function (e) {
                 var t = e.target;
@@ -2315,6 +2617,12 @@ function makeRow(entry) {
                 if (t && t.tagName === "INPUT") return;      // mid-rename
                 e.preventDefault();
                 startPinDrag(node, e, row);
+            });
+
+            row.querySelector(".tskip").addEventListener("click", function (e) {
+                e.stopPropagation();
+                e.preventDefault();
+                toggleSkip(node);
             });
 
             // Both open the same thing: everything ever imported into this bin.
@@ -3004,7 +3312,14 @@ var MIRROR_KEY = "aip_mirrorSubfolders";
 var MIRROR_MAX_NEW = 200, MIRROR_MAX_DEPTH = 5;
 var BUNDLE_RE = /\.(app|bundle|framework|photoslibrary|fcpbundle|lrdata|aplibrary|rdc|dSYM)$/i;
 
-function mirrorOn() { return localStorage.getItem(MIRROR_KEY) !== "0"; }
+/* Off by default.
+ *
+ * On, every Import rewrote the bin structure from whatever happened to be on
+ * disk — and once Import also ran by itself when a project opened, simply
+ * opening a project could reorganise the panel. Structure is the one thing that
+ * should not change without being asked. ⚙ > Scan folders does the same job
+ * when you want it, and shows you the list before it touches anything. */
+function mirrorOn() { return localStorage.getItem(MIRROR_KEY) === "1"; }
 function setMirror(on) {
     localStorage.setItem(MIRROR_KEY, on ? "1" : "0");
     syncMirrorLabel();
@@ -3048,6 +3363,76 @@ function pathIsInside(parent, child) {
     return cc.indexOf(pp + "/") === 0 || cc.indexOf(pp + "\\") === 0;
 }
 
+/* The same walk as mirrorSubfolders, but it reports instead of writing.
+ *
+ * This is what ⚙ > Scan folders shows you: every folder on disk with no bin
+ * linked to it, including ones nested inside folders that are also new. Same
+ * guards — switched-off branches, bundles, the depth and count caps — because a
+ * list that offers something the mirror would refuse is a list that lies.
+ */
+function newSubfolders() {
+    if (!nodeFs() || !treeData) return [];
+    var out = [];
+    function full(np) { return np.join("\t"); }
+    // A folder that is new: everything under it is new too.
+    function scanDisk(dir, np, depth, guard) {
+        if (out.length >= MIRROR_MAX_NEW || guard > 40 || depth > MIRROR_MAX_DEPTH) return;
+        var subs = subfoldersOf(dir);
+        for (var i = 0; i < subs.length && out.length < MIRROR_MAX_NEW; i++) {
+            var sp = np.concat([subs[i].name]);
+            out.push({ path: full(sp), folder: subs[i].path });
+            scanDisk(subs[i].path, sp, depth + 1, guard + 1);
+        }
+    }
+    function scan(node, np, chainDepth, guard) {
+        if (out.length >= MIRROR_MAX_NEW || guard > 40 || node.skip) return;
+        var kids = node.children || [], i, c;
+        if (node.folder && chainDepth <= MIRROR_MAX_DEPTH) {
+            var subs = subfoldersOf(node.folder);
+            for (i = 0; i < subs.length && out.length < MIRROR_MAX_NEW; i++) {
+                var have = null;
+                for (c = 0; c < kids.length; c++) {
+                    if (String(kids[c].name).toLowerCase() === subs[i].name.toLowerCase()) { have = kids[c]; break; }
+                }
+                if (have) {
+                    // A bin made by hand, named after the folder, with no link.
+                    if (!have.folder) out.push({ path: full(np.concat([have.name])), folder: subs[i].path });
+                } else {
+                    var sp = np.concat([subs[i].name]);
+                    out.push({ path: full(sp), folder: subs[i].path });
+                    scanDisk(subs[i].path, sp, chainDepth + 1, guard + 1);
+                }
+            }
+        }
+        for (var k = 0; k < kids.length; k++) {
+            var nested = pathIsInside(node.folder, kids[k].folder);
+            scan(kids[k], np.concat([kids[k].name]), nested ? chainDepth + 1 : 1, guard + 1);
+        }
+    }
+    for (var t = 0; t < treeData.length; t++) scan(treeData[t], [treeData[t].name], 1, 0);
+    return out;
+}
+
+/* Manual, and it shows its work: the list comes up first and nothing changes
+ * until Add is pressed. */
+function scanFoldersNow() {
+    var recs = newSubfolders();
+    if (!recs.length) {
+        setStatus("No folders without a bin — the structure already matches the disk.", "ok");
+        return;
+    }
+    showAdoptDialog(recs, false, {
+        title: "Folders with no bin",
+        lede: recs.length + " folder" + (recs.length === 1 ? " was" : "s were") +
+              " found on disk with nothing linked to " + (recs.length === 1 ? "it" : "them") +
+              ". Tick the ones to add.",
+        onAdd: function (keep) {
+            pushUndo("adding " + keep.length + " bin" + (keep.length === 1 ? "" : "s") + " from disk");
+            adoptPaths(keep);
+        }
+    });
+}
+
 function mirrorSubfolders() {
     if (!nodeFs()) return 0;
     var added = 0;
@@ -3064,6 +3449,9 @@ function mirrorSubfolders() {
      */
     function mirrorInto(node, chainDepth, guard) {
         if (added >= MIRROR_MAX_NEW || guard > 40) return;
+        // "Leave this branch alone" has to mean the whole branch, or a new
+        // subfolder would quietly appear under a bin that was switched off.
+        if (node.skip) return;
         if (node.folder && chainDepth <= MIRROR_MAX_DEPTH) {
             var subs = subfoldersOf(node.folder);
             if (!node.children) node.children = [];
@@ -3100,9 +3488,19 @@ function mirrorSubfolders() {
     return added;
 }
 
-function importAll() {
+/* `auto` marks a run the panel started itself, which changes two things: the
+ * result says so, and a clash with a hand-pressed Import resolves in favour of
+ * whichever was already going rather than interleaving two chains of
+ * evalScript into the same project. */
+var importBusy = false;
+function importAll(auto) {
+    if (importBusy) {
+        if (!auto) setStatus("Already importing — give it a moment.", "");
+        return;
+    }
     var bad = treeProblem();
-    if (bad) { setStatus(bad, "error"); return; }
+    if (bad) { if (!auto) setStatus(bad, "error"); return; }
+    importBusy = true;
 
     /* Pick up subfolders added since last time, before working out what to
      * import — otherwise the new folder's files have nowhere to go and the run
@@ -3123,10 +3521,15 @@ function importAll() {
 
     var paths = [];
     forEachNode(function (n, np) { paths.push(np.join("\t")); });
-    if (!paths.length) { setStatus("Structure is empty — add a bin first.", "error"); return; }
+    if (!paths.length) { importBusy = false; setStatus("Structure is empty — add a bin first.", "error"); return; }
 
     var jobs = [];
-    forEachNode(function (n, np) { if (n.folder) jobs.push({ bin: np.join("\t"), folder: n.folder, ci: colorIdxOf(n) }); });
+    var skipped = skippedNodes(), skippedLinked = 0;
+    forEachNode(function (n, np) {
+        if (!n.folder) return;
+        if (skipped.has(n)) { skippedLinked++; return; }
+        jobs.push({ bin: np.join("\t"), folder: n.folder, ci: colorIdxOf(n) });
+    });
 
     setStatus("Creating bins…", "");
     cs.evalScript("aip_createStructure(" + q(paths.join("\n")) + ")", function (res) {
@@ -3134,18 +3537,24 @@ function importAll() {
             var msg = (res && String(res).indexOf("ERR:") === 0)
                 ? String(res).substring(4)
                 : "Premiere didn’t run the script (" + (res || "no response") + ")";
+            importBusy = false;
             setStatus("⚠ " + msg, "error");
             return;
         }
         var made = parseInt(String(res).substring(3), 10);
         var madeBit = (!isNaN(made) && made > 0) ? (made + " bin" + (made === 1 ? "" : "s") + " created · ") : "";
         if (mirrored) madeBit = mirrored + " folder" + (mirrored === 1 ? "" : "s") + " mirrored · " + madeBit;
+        /* Switched-off bins are stated every run. A panel that quietly imports
+         * less than everything, and does not say so, is the failure this whole
+         * feature is one keystroke away from. */
+        if (skippedLinked) madeBit += skippedLinked + " bin" + (skippedLinked === 1 ? "" : "s") + " switched off · ";
         recolorAll();
         if (!jobs.length) {
+            importBusy = false;
             setStatus(madeBit ? ("✓ " + madeBit.replace(" · ", ".")) : "Bins are already there — link a folder to import files.", "ok");
             return;
         }
-        runImports(jobs, madeBit);
+        runImports(jobs, auto ? ("on open · " + madeBit) : madeBit);
     });
 }
 
@@ -3169,6 +3578,7 @@ function runImports(jobs, madeBit) {
             var detail = trace.length ? ("What Premiere reported, bin by bin:<br>" +
                 esc(trace.join("\n")).replace(/\n/g, "<br>")) : "";
             recolorAll(function () {
+                importBusy = false;
                 checkLinks();         // mirroring may have linked new bins
                 renderAll();          // paint the "new" badges
                 if (!errors.length) {
@@ -3844,6 +4254,187 @@ function openLogFor(np) {
 
 function isWindows() { return /win/i.test(navigator.platform || ""); }
 function modKeyName() { return isWindows() ? "Alt" : "⌘"; }
+// Option on a Mac IS Alt; the key name is the only difference worth showing.
+function altKeyName() { return isWindows() ? "Alt" : "Option"; }
+
+/* ====================================================================
+ *  IMPORT FROM… — Option-click Import to pick which bins to pull from
+ * ====================================================================
+ *
+ * Plain Import means every linked bin, and keeps meaning that. This is the
+ * "I only want that one folder" case, which on a 370-bin project is most of
+ * them: waiting for a hundred bins to answer when you changed one is the
+ * difference between using the panel and not.
+ *
+ * The list is FLAT, unlike the adopt dialog's. Importing from a bin does not
+ * require importing from its parent — each is independent — so there is no
+ * cascade to model and no tree to fold. What a row needs instead is enough
+ * path to tell twelve bins named "Draft" apart.
+ *
+ * This is ONE RUN, not a setting. The per-bin toggle in the bin structure is the
+ * permanent version — two saved answers to "what gets imported" would sooner or
+ * later disagree, and the one you could not see would win. So the picker starts
+ * from whatever is switched on and forgets your choice the moment it runs.
+ */
+/* Every bin that could import: one with a folder. A bin whose folder has gone
+ * is listed but cannot be chosen — it is a guaranteed failure, and offering it
+ * would only produce the "imported nothing" report twice. */
+function importableBins() {
+    var out = [], off = skippedNodes();
+    forEachNode(function (n, np) {
+        if (!n.folder) return;
+        out.push({ path: np.join("\t"), np: np, node: n, folder: n.folder,
+                   missing: linkMissing(np), off: off.has(n) });
+    });
+    out.sort(function (a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0); });
+    return out;
+}
+
+function showImportPicker() {
+    var items = importableBins();
+    if (!items.length) {
+        setStatus("No bin has a folder linked yet — drop a folder on the list first.", "error");
+        return;
+    }
+    var chosen = {};
+    for (var i = 0; i < items.length; i++) {
+        // Starts from what is switched on in the tree. A missing folder and a
+        // switched-off bin are never ticked.
+        chosen[items[i].path] = !items[i].missing && !items[i].off;
+    }
+
+    var ov = document.createElement("div");
+    ov.className = "modalOv";
+    var h = '<div class="modal adopt pick"><div class="modalTitle">Import from…</div>' +
+        '<div class="modalBody">' +
+        "Just this run — untick here and nothing changes for next time." +
+        '</div>' +
+        '<div class="adoptFind">' + ICON_SEARCH +
+            '<input class="adoptFindInput" type="text" placeholder="Filter bins…" spellcheck="false" ' +
+            'data-tip="Narrow by bin name or by the path above it." />' +
+            '<button class="adoptFindClear" style="display:none;" aria-label="Clear the filter">' + ICON_XSMALL + '</button>' +
+        '</div>' +
+        '<div class="adoptTools">' +
+            '<span class="adoptCount"></span>' +
+            '<button class="adoptAll" data-tip="Tick every bin that can be read from.">Tick all</button>' +
+            '<button class="adoptNone" data-tip="Tick none of them.">Untick all</button>' +
+        '</div>' +
+        '<div class="adoptList">';
+    for (var j = 0; j < items.length; j++) {
+        var it = items[j];
+        var parent = it.np.slice(0, it.np.length - 1).join(" / ");
+        h += '<div class="adoptRow pickRow' + (it.missing ? " gone" : "") + (it.off ? " off" : "") +
+            '" data-path="' + esc(it.path) + '">' +
+            '<label class="adoptLabel">' +
+            '<input type="checkbox"' + (chosen[it.path] ? " checked" : "") +
+                ((it.missing || it.off) ? " disabled" : "") + ' data-path="' + esc(it.path) + '">' +
+            '<span class="pickName">' + esc(it.node.name) +
+                (parent ? '<span class="pickIn">' + esc(parent) + '</span>' : '') + '</span>' +
+            (it.off
+                ? '<span class="adoptFol offTag">switched off</span>'
+                : it.missing
+                ? '<span class="adoptFol gone" title="' + esc(it.folder) + '">folder missing</span>'
+                : '<span class="adoptFol" title="' + esc(it.folder) + '">' + esc(shortFolder(it.folder)) + '</span>') +
+            '</label></div>';
+    }
+    h += '</div><div class="modalBtns">' +
+        '<button class="mbtn adoptGo pickGo">Import</button></div>' +
+        '<button class="modalCancel">Cancel</button></div>';
+    ov.innerHTML = h;
+    document.body.appendChild(ov);
+
+    var boxes = ov.querySelectorAll(".adoptList input");
+    var goBtn = ov.querySelector(".pickGo");
+    var countEl = ov.querySelector(".adoptCount");
+    var findInput = ov.querySelector(".adoptFindInput");
+    var findClear = ov.querySelector(".adoptFindClear");
+    var rows = ov.querySelectorAll(".pickRow");
+    var okCount = 0;
+    for (var oc = 0; oc < items.length; oc++) if (!items[oc].missing && !items[oc].off) okCount++;
+
+    function tickedList() {
+        var out = [];
+        for (var t = 0; t < items.length; t++) if (chosen[items[t].path]) out.push(items[t].path);
+        return out;
+    }
+    function shownNow() {
+        var k = 0;
+        for (var r = 0; r < rows.length; r++) if (rows[r].style.display !== "none") k++;
+        return k;
+    }
+    function sync() {
+        var n = tickedList().length;
+        goBtn.textContent = n ? ("Import from " + n + " bin" + (n === 1 ? "" : "s")) : "Import";
+        goBtn.disabled = !n;
+        goBtn.classList.toggle("off", !n);
+        var term = findInput.value.replace(/^\s+|\s+$/g, "");
+        countEl.textContent = n + " of " + okCount + " ticked" +
+            (term ? " · showing " + shownNow() : "");
+    }
+    for (var b = 0; b < boxes.length; b++) {
+        (function (box) {
+            box.addEventListener("change", function () {
+                chosen[box.getAttribute("data-path")] = box.checked;
+                sync();
+            });
+        })(boxes[b]);
+    }
+    // Whole list, not the filtered view — the same rule as the adopt dialog, and
+    // for the same reason.
+    function setAll(on) {
+        for (var k2 = 0; k2 < boxes.length; k2++) {
+            if (boxes[k2].disabled) continue;
+            boxes[k2].checked = on;
+            chosen[boxes[k2].getAttribute("data-path")] = on;
+        }
+        sync();
+    }
+    ov.querySelector(".adoptAll").onclick = function () { setAll(true); };
+    ov.querySelector(".adoptNone").onclick = function () { setAll(false); };
+
+    function applyFilter() {
+        var term = findInput.value.replace(/^\s+|\s+$/g, "").toLowerCase();
+        findClear.style.display = term ? "flex" : "none";
+        for (var r = 0; r < rows.length; r++) {
+            // Path as well as name: "Draft" appears a dozen times and the path is
+            // the only thing that tells them apart.
+            var hay = rows[r].getAttribute("data-path").toLowerCase().replace(/\t/g, " ");
+            rows[r].style.display = (!term || hay.indexOf(term) >= 0) ? "" : "none";
+        }
+        sync();
+    }
+    findInput.addEventListener("input", applyFilter);
+    findInput.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); findInput.value = ""; applyFilter(); }
+    });
+    findClear.onclick = function () { findInput.value = ""; applyFilter(); findInput.focus(); };
+
+    function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+    ov.querySelector(".modalCancel").onclick = close;
+    goBtn.onclick = function () {
+        if (goBtn.disabled) return;
+        var picked = tickedList();
+        close();
+        importFromPaths(picked);
+    };
+    sync();
+}
+
+/* Import from a chosen subset. No mirroring and no structure pass: this is the
+ * targeted case, and aip_import creates the bin path it is given anyway. */
+function importFromPaths(picked) {
+    if (importBusy) { setStatus("Already importing — give it a moment.", ""); return; }
+    importBusy = true;
+    var want = {}, jobs = [];
+    for (var i = 0; i < picked.length; i++) want[picked[i]] = true;
+    var off = skippedNodes();
+    forEachNode(function (n, np) {
+        var key = np.join("\t");
+        if (n.folder && want[key] && !off.has(n)) jobs.push({ bin: key, folder: n.folder, ci: colorIdxOf(n) });
+    });
+    if (!jobs.length) { importBusy = false; setStatus("Those bins are no longer linked.", "error"); return; }
+    runImports(jobs, "");
+}
 
 /*
  * Jump to a bin in Premiere's Project panel.
@@ -4046,6 +4637,47 @@ function initOnboard() {
 // status with "Every one of those was already here." The panel calls this on
 // launch, on window focus and on mouseenter, so overlapping calls are normal.
 var projectQueryBusy = false;
+/* ---------- importing when a project opens ----------
+ *
+ * Opening a project you have already set up and then pressing Import is the
+ * same two actions every time, so the panel does it for you.
+ *
+ * Three things keep it from being a nuisance. It fires ONCE per project per
+ * session, so Reload and the project poll cannot retrigger it. It waits a
+ * moment first, because Premiere is still opening the project and handing it an
+ * import in that window is asking for the intermittent nothing-happened this
+ * project has spent days on. And the result says it was automatic, so files
+ * appearing on their own is never a mystery.
+ *
+ * Off in the gear for anyone who would rather decide themselves.
+ */
+var AUTOIMPORT_KEY = "aip_autoImportOnOpen";
+var AUTO_IMPORT_DELAY = 1500;
+var autoImportKey = null;          // one automatic run per project, per session
+function autoImportOn() { return localStorage.getItem(AUTOIMPORT_KEY) !== "0"; }
+function setAutoImport(on) {
+    localStorage.setItem(AUTOIMPORT_KEY, on ? "1" : "0");
+    syncAutoImportLabel();
+}
+function syncAutoImportLabel() {
+    var el = document.getElementById("giAutoImportLabel");
+    if (el) el.textContent = autoImportOn() ? "Import on project open: on" : "Import on project open: off";
+}
+function maybeAutoImport(key) {
+    if (!autoImportOn() || key === "__noproject__" || autoImportKey === key) return;
+    autoImportKey = key;
+    // Nothing to read from is not worth a run, and would only produce a status
+    // line about a project the user has not touched yet.
+    var off = skippedNodes(), any = false;
+    forEachNode(function (n) { if (n.folder && !off.has(n)) any = true; });
+    if (!any) return;
+    setTimeout(function () {
+        // They may have switched projects again inside the delay.
+        if (currentProjectKey !== key) return;
+        importAll(true);
+    }, AUTO_IMPORT_DELAY);
+}
+
 function refreshProject(force) {
     if (projectQueryBusy) return;
     projectQueryBusy = true;
@@ -4064,8 +4696,9 @@ function refreshProject(force) {
             treeData = t;
             renderAll();
             // First look at this project: confirm the saved links still exist
-            // before anyone trusts them.
+            // before anyone trusts them, then bring in whatever is new.
             checkLinksAndReport();
+            maybeAutoImport(key);
         }
     });
 }
@@ -4379,7 +5012,8 @@ function readProjectBins() {
  * is what stops the cascades recursing into each other: an ancestor ticked as a
  * side effect must not then tick all of ITS descendants.
  */
-function showAdoptDialog(recs, trunc) {
+function showAdoptDialog(recs, trunc, opts) {
+    opts = opts || {};
     /* Ticked by default: only the bins the panel does not already have.
      *
      * Everything-ticked was fine on a fresh project and wrong on a real one.
@@ -4404,14 +5038,15 @@ function showAdoptDialog(recs, trunc) {
     // from which rows happen to be on.
     // Mixed = some already in, some not. That is the only case where a per-row
     // marker tells you anything.
-    var mixedHave = newCount > 0 && newCount < paths.length;
+    var mixedHave = !opts.title && newCount > 0 && newCount < paths.length;
     var lede = newCount
         ? (newCount === paths.length
             ? "Tick the ones to bring into the panel."
             : newCount + " of these " + paths.length + " are not in the panel yet, and are ticked.")
         : "Every one of these is already in the panel. Tick any you want to read again.";
-    var h = '<div class="modal adopt"><div class="modalTitle">Bins in this project</div>' +
-        '<div class="modalBody">' + lede +
+    var h = '<div class="modal adopt"><div class="modalTitle">' +
+        esc(opts.title || "Bins in this project") + '</div>' +
+        '<div class="modalBody">' + (opts.lede || lede) +
         (trunc ? " Showing the first " + paths.length + "." : "") + '</div>' +
         '<div class="adoptFind">' +
             ICON_SEARCH +
@@ -4669,7 +5304,7 @@ function showAdoptDialog(recs, trunc) {
             if (chosen[paths[m]]) keep.push({ path: paths[m], folder: folderOf[paths[m]] });
         }
         close();
-        adoptPaths(keep);
+        (opts.onAdd || adoptPaths)(keep);
     };
     syncGo();
     applyFold();
@@ -5047,7 +5682,13 @@ document.addEventListener("DOMContentLoaded", function () {
     initOnboard();
 
     // main view
-    document.getElementById("importBtn").onclick = importAll;
+    /* Plain click imports from everything linked, as it always has. Option (Alt
+     * on Windows) opens the picker. The modifier only ever opens a dialog, so a
+     * mis-hit costs a Cancel rather than an import. */
+    document.getElementById("importBtn").onclick = function (e) {
+        if (e && e.altKey) { showImportPicker(); return; }
+        importAll(false);
+    };
     document.getElementById("treeHeader").onclick = toggleCollapsed;
     // Sits inside that header, so it has to keep its click to itself or folding
     // the bins would fold the whole section away underneath them. Assigned, not
@@ -5070,12 +5711,20 @@ document.addEventListener("DOMContentLoaded", function () {
         refreshProject(true); setStatus("Reloaded for this project.", "");
     };
     document.getElementById("tbUndo").onclick = undoLast;
+    document.getElementById("giScan").onclick = function () { closeGear(); scanFoldersNow(); };
     document.getElementById("giMirror").onclick = function () {
         closeGear();
         var on = !mirrorOn();
         setMirror(on);
         setStatus(on ? "Import will mirror subfolders into sub-bins."
                      : "Import will leave your structure alone.", "ok");
+    };
+    document.getElementById("giAutoImport").onclick = function () {
+        closeGear();
+        var on = !autoImportOn();
+        setAutoImport(on);
+        setStatus(on ? "Import will run once when a project opens."
+                     : "Import will only run when you press it.", "ok");
     };
     document.getElementById("giDepth").onclick = function () {
         closeGear();

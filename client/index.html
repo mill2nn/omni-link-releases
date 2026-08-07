@@ -12,7 +12,7 @@
         <div id="mainView" class="view">
             <div class="header">
                 <div class="headerTop">
-                <button id="importBtn" class="importPill" data-tip="<b>Import new files</b>Goes through every bin that has a folder linked and brings in anything that isn't already there. Files you've imported before are skipped, so pressing it twice never duplicates anything.">
+                <button id="importBtn" class="importPill" data-tip="<b>Import new files</b>Goes through every bin that has a folder linked and brings in anything that isn't already there. Files you've imported before are skipped, so pressing it twice never duplicates anything.<i>Option-click to pick which bins to read from.</i>">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11" /><path d="M8 11l4 4 4-4" /><path d="M5 20h14" /></svg>
                     <span>Import</span>
                 </button>
@@ -36,7 +36,15 @@
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10" /><circle cx="19" cy="18" r="2" /></svg>
                             <span id="giTileModeLabel">Pinned click: highlight instead</span>
                         </button>
-                        <button class="gearItem" id="giMirror" data-tip="When Import runs, a subfolder inside a linked folder becomes a matching sub-bin, linked and imported.<i>Turn it off if you want the structure to stay exactly as you built it.</i>">
+                        <button class="gearItem" id="giAutoImport" data-tip="Run Import once, on its own, the first time each project is opened.<i>Switch it off if you would rather press Import yourself.</i>">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11" /><path d="M8 11l4 4 4-4" /><path d="M5 20h14" /><circle cx="18.5" cy="5.5" r="2.5" /></svg>
+                            <span id="giAutoImportLabel">Import on project open: on</span>
+                        </button>
+                        <button class="gearItem" id="giScan" data-tip="Look for folders on disk that have no bin linked to them, and show you the list.<i>Nothing changes until you pick from it.</i>">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h5a2 2 0 0 1 2 2v2" /><circle cx="16" cy="16" r="4" /><path d="M19 19l2.5 2.5" /></svg>
+                            Scan folders…
+                        </button>
+                        <button class="gearItem" id="giMirror" data-tip="Let every Import rebuild sub-bins from whatever is on disk, without asking.<i>Off by default: with Import also running when a project opens, this could reorganise the panel on its own. ⚙ &gt; Scan folders does the same job when you ask for it.</i>">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h3l2 2h4a2 2 0 0 1 2 2" /><path d="M7 12h13a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2z" /></svg>
                             <span id="giMirrorLabel">Mirror subfolders: on</span>
                         </button>
@@ -147,8 +155,8 @@
 
             <div class="searchRow">
                 <svg class="searchIco" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7" /><path d="M20 20l-4.3-4.3" /></svg>
-                <input id="searchInput" type="text" placeholder="Search bins…" spellcheck="false"
-                       data-tip="Filter the bin structure by name.<i>A bin with a match inside opens automatically. Escape clears.</i>" />
+                <input id="searchInput" type="text" placeholder="Search bins…  e.g. kling v1" spellcheck="false"
+                       data-tip="Find a bin by name, or by where it sits: <b>kling v1</b> means the v1 inside Kling, not every v1.<i>Typing is forgiving on longer words, and accents are optional. Escape clears.</i>" />
                 <button id="searchClear" class="searchClear" style="display:none;" aria-label="Clear the search">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                 </button>

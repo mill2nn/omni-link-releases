@@ -1,5 +1,5 @@
 {
-  "version": "1.3.10",
-  "notes": "Import now reports what actually arrived and names files Premiere refused, new subfolders are picked up again, each bin opens its own log, and the bins-in-project list can be filtered and folded.",
+  "version": "1.3.11",
+  "notes": "Search by where a bin sits (type: kling v1), a per-bin switch to keep a bin out of Import, Import runs once when a project opens, and subfolder mirroring is now off by default with a manual gear > Scan folders instead.",
   "files": ["client/index.html", "client/main.js", "client/style.css", "client/CSInterface.js", "jsx/host.jsx", "CSXS/manifest.xml"]
 }

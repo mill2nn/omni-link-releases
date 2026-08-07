@@ -502,6 +502,35 @@ body.depthCues .trow[data-depth="6"]::after {
                 -110px 0 0 0 rgba(255, 255, 255, 0.06);
 }
 
+/* --- the per-bin Import switch ---
+   A 14px control has to read at a glance, so it is shape not colour: filled
+   with a tick when in, hollow when out, a dash when the branch below is mixed.
+   Two classes deep, so no one-class utility can reshape it. */
+.trow .tskip {
+    flex: none; width: 14px; height: 14px; padding: 0; border-radius: 4px;
+    border: 1.5px solid rgba(255, 255, 255, 0.30); background: transparent;
+    position: relative; transition: 0.12s;
+}
+.trow .tskip:hover { border-color: rgba(255, 255, 255, 0.55); }
+.trow .tskip.on { background: var(--accent-2); border-color: var(--accent-2); }
+/* The tick is drawn, not a glyph: a font that lacks one would leave this blank,
+   and blank is the other state. */
+.trow .tskip.on::after {
+    content: ""; position: absolute; left: 3.5px; top: 0.5px;
+    width: 3.5px; height: 7px; border: solid #fff;
+    border-width: 0 1.8px 1.8px 0; transform: rotate(45deg);
+}
+/* Some of the branch below is out. Not a tick, because it is not all in. */
+.trow .tskip.mixed { background: rgba(45, 140, 235, 0.28); border-color: rgba(45, 140, 235, 0.6); }
+.trow .tskip.mixed::after {
+    content: ""; position: absolute; left: 2px; right: 2px; top: 5px;
+    height: 1.8px; border-radius: 1px; background: #cfe4fb;
+}
+/* Switched off: the row stays legible but stops competing with the bins that
+   will actually import. */
+.trow.skipped { opacity: 0.45; }
+.trow.skipped .tname { text-decoration: line-through; text-decoration-thickness: 1px; }
+
 /* fold / unfold parent bins */
 .trow .tchev {
     flex: none; width: 15px; height: 15px; padding: 0; border: none; border-radius: 4px;
@@ -629,6 +658,30 @@ body.depthCues .trow[data-depth="6"]::after {
 /* Inert while a filter is on: matching bins are already shown. */
 .adoptTools button.off { opacity: 0.4; cursor: default; }
 .adoptTools button.off:hover { color: var(--text-2); background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.10); }
+
+/* --- "import from…" picker ---
+   A flat list, because importing from a bin does not require importing from its
+   parent. Each row carries enough path to tell twelve bins named "Draft" apart. */
+.pickRow .pickName {
+    flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column;
+    overflow: hidden; white-space: nowrap;
+}
+.pickRow .pickIn {
+    font-size: 9.5px; color: var(--text-3); line-height: 1.3;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pickRow { align-items: flex-start; padding-top: 6px; padding-bottom: 6px; }
+.pickRow input { margin-top: 1px; }
+/* A folder that has gone cannot be read from, so the row says so and the box is
+   inert rather than offering an import that is certain to bring nothing. */
+.pickRow.gone { opacity: 0.6; }
+.pickRow.gone .adoptLabel { cursor: default; }
+.adoptFol.gone { color: var(--danger); font-style: normal; }
+/* Switched off in the tree, so the picker shows it but cannot offer it — the
+   permanent setting outranks a one-run choice. */
+.adoptFol.offTag { color: var(--text-3); font-style: normal; }
+.pickRow.off { opacity: 0.5; }
+.pickRow.off .adoptLabel { cursor: default; }
 
 /* Already in the panel: adopting it again is harmless but is not what you came
    for, so it is quieter and says why it is not ticked. */
