@@ -126,6 +126,12 @@
                 <svg class="fhChevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
                 <span class="fhLabel">BIN STRUCTURE</span>
                 <span class="secHint">drop a folder · right-click for options</span>
+                <!-- The switch for everything below it. Same three states and the
+                     same square as the per-bin switches, because it is the same
+                     control one level up. -->
+                <button id="skipAllBtn" class="cRev cSkipAll" aria-label="Switch every bin in or out of Import">
+                    <span class="tskip on"></span>
+                </button>
                 <!-- Folds every bin at once. It lives here rather than on the
                      toolbar because it is a view control like the sort beside
                      it, and four buttons already fill a 300px dock. -->

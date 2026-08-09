@@ -1032,6 +1032,28 @@ body.depthCues .trow[data-depth="6"]::after {
    keep in step with the stored value. */
 .cRev.desc svg { transform: rotate(180deg); }
 .cRev.desc { color: var(--accent); border-color: rgba(45, 140, 235, 0.45); }
+/* The master switch borrows the row switch's square so the two read as the same
+   control. It is a span here, not a button, so the .trow rules do not reach it. */
+.cSkipAll .tskip {
+    display: block; width: 13px; height: 13px; border-radius: 4px;
+    border: 1.5px solid rgba(255, 255, 255, 0.30); background: transparent;
+    position: relative;
+}
+.cSkipAll .tskip.on { background: var(--accent-2); border-color: var(--accent-2); }
+.cSkipAll .tskip.on::after {
+    content: ""; position: absolute; left: 3.2px; top: 0.4px;
+    width: 3.2px; height: 6.4px; border: solid #fff;
+    border-width: 0 1.7px 1.7px 0; transform: rotate(45deg);
+}
+.cSkipAll .tskip.mixed { background: rgba(45, 140, 235, 0.28); border-color: rgba(45, 140, 235, 0.6); }
+.cSkipAll .tskip.mixed::after {
+    content: ""; position: absolute; left: 2px; right: 2px; top: 4.5px;
+    height: 1.7px; border-radius: 1px; background: #cfe4fb;
+}
+/* The header's free space goes to the first control in the group. */
+.folderHeader .cSkipAll { margin-left: auto; }
+.folderHeader .cSkipAll + .cFold { margin-left: 0; }
+
 .tSortWrap { letter-spacing: normal; }
 /* The fold button leads the group, so it takes the free space; the two after
    it sit tight against it. */

@@ -22,7 +22,7 @@ var cs = new CSInterface();
 // Bump this AND ExtensionBundleVersion in CSXS/manifest.xml together — the
 // shareable-zip script fails the build if the two ever disagree, because
 // "which version are you on?" has to have one answer.
-var VERSION = "1.3.11";
+var VERSION = "1.3.12";
 
 /*
  * What Import picks up. A format missing from here is skipped in silence — the
@@ -550,6 +550,47 @@ function skippedNodes() {
     })(treeData || [], false);
     return out;
 }
+/* The same three states, for the whole tree. */
+function allSkipState() {
+    var on = 0, off = 0;
+    forEachNode(function (n) { if (n.skip) off++; else on++; });
+    if (!on && !off) return "on";
+    return off ? (on ? "mixed" : "off") : "on";
+}
+function syncSkipAll() {
+    var b = document.getElementById("skipAllBtn");
+    if (!b) return;
+    var any = false;
+    forEachNode(function () { any = true; });
+    b.style.display = any ? "flex" : "none";
+    if (!any) return;
+    var st = allSkipState();
+    b.querySelector(".tskip").className = "tskip " + st;
+    b.setAttribute("data-tip", st === "off"
+        ? "Every bin is out of Import.<i>Click to bring them all back.</i>"
+        : "Switch every bin out of Import.<i>" +
+          (st === "mixed" ? "Some are already out. " : "") +
+          "Each one keeps its own switch afterwards.</i>");
+}
+/* Anything still in switches everything out, so one click always silences the
+ * lot; only an all-out tree comes back. Same rule as the per-bin switch and as
+ * Fold all, so there is one behaviour to learn rather than three. */
+function toggleSkipAll() {
+    var off = allSkipState() !== "off";
+    var n = 0;
+    forEachNode(function () { n++; });
+    if (!n) return;
+    pushUndo(off ? "switching off every bin" : "switching on every bin");
+    for (var i = 0; i < treeData.length; i++) {
+        treeData[i].skip = off ? true : undefined;
+        if (!off) delete treeData[i].skip;
+        setSkip(treeData[i], off);
+    }
+    saveTree();
+    renderAll();
+    setStatus(off ? "All " + n + " bins are out of Import." : "All " + n + " bins are back in.", "ok");
+}
+
 function toggleSkip(node) {
     var was = skipState(node);
     // Anything still on switches off, so one click on a parent always silences
@@ -666,6 +707,7 @@ function renderAll() {
     renderTree();
     applyCollapsed();
     applyDepthCues();
+    syncSkipAll();
     syncAutoImportLabel();
     syncContentsView();
     var total = 0;
@@ -5690,6 +5732,12 @@ document.addEventListener("DOMContentLoaded", function () {
         importAll(false);
     };
     document.getElementById("treeHeader").onclick = toggleCollapsed;
+    // Inside the collapse header, so it has to keep its click to itself.
+    document.getElementById("skipAllBtn").onclick = function (e) {
+        e.stopPropagation();
+        e.preventDefault();
+        toggleSkipAll();
+    };
     // Sits inside that header, so it has to keep its click to itself or folding
     // the bins would fold the whole section away underneath them. Assigned, not
     // added: this runs more than once, and a second listener would fold and
