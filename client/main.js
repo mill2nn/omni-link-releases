@@ -22,7 +22,7 @@ var cs = new CSInterface();
 // Bump this AND ExtensionBundleVersion in CSXS/manifest.xml together — the
 // shareable-zip script fails the build if the two ever disagree, because
 // "which version are you on?" has to have one answer.
-var VERSION = "1.3.12";
+var VERSION = "1.3.13";
 
 /*
  * What Import picks up. A format missing from here is skipped in silence — the
@@ -251,16 +251,6 @@ function loadBinOpenPref() {
     var m = /<BE\.Prefs\.Flexbin\.DoubleClickBehavior>(\d+)</.exec(text);
     if (m) binOpenPref = parseInt(m[1], 10);
 }
-/* Appended to a jump's status when bins open as tabs. Not a popup and not a
- * blocker: the jump may well be landing correctly in the main Project panel,
- * and the only thing wrong is which panel is in front. */
-function binTabNote() {
-    if (binOpenPref <= 0) return "";
-    return " (Bins open in a " + (binOpenPref === 2 ? "new window" : "new tab") +
-        " — a bin tab can’t be jumped to. Alt-double-click a bin, or set" +
-        " Settings > General > Bins > Double-click to Open in Place.)";
-}
-
 // Tint helpers: pinned tiles and row rails are drawn from the bin's own colour.
 function hexToRgba(hex, a) {
     hex = String(hex).replace("#", "");
@@ -268,14 +258,6 @@ function hexToRgba(hex, a) {
     return "rgba(" + parseInt(hex.substr(0, 2), 16) + "," + parseInt(hex.substr(2, 2), 16) +
         "," + parseInt(hex.substr(4, 2), 16) + "," + a + ")";
 }
-function readableInk(hex) {
-    hex = String(hex).replace("#", "");
-    if (hex.length < 6) return "#ffffff";
-    var r = parseInt(hex.substr(0, 2), 16), g = parseInt(hex.substr(2, 2), 16), b = parseInt(hex.substr(4, 2), 16);
-    var L = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    return L > 0.62 ? "#2a2010" : "#ffffff";
-}
-
 // ---------- small helpers ----------
 function esc(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
@@ -513,8 +495,7 @@ function expandTree() { localStorage.setItem(COLLAPSE_KEY, "0"); applyCollapsed(
  * being fully on.
  */
 function setSkip(node, off) {
-    node.skip = off ? true : undefined;
-    if (!off) delete node.skip;
+    if (off) node.skip = true; else delete node.skip;
     (function rec(n) {
         var kids = n.children || [];
         for (var i = 0; i < kids.length; i++) {
@@ -581,11 +562,9 @@ function toggleSkipAll() {
     forEachNode(function () { n++; });
     if (!n) return;
     pushUndo(off ? "switching off every bin" : "switching on every bin");
-    for (var i = 0; i < treeData.length; i++) {
-        treeData[i].skip = off ? true : undefined;
-        if (!off) delete treeData[i].skip;
-        setSkip(treeData[i], off);
-    }
+    // setSkip covers the node it is given as well as its branch, so the roots
+    // need nothing extra.
+    for (var i = 0; i < treeData.length; i++) setSkip(treeData[i], off);
     saveTree();
     renderAll();
     setStatus(off ? "All " + n + " bins are out of Import." : "All " + n + " bins are back in.", "ok");
@@ -2954,17 +2933,6 @@ function arrIsWithin(node, arr) {
     for (var i = 0; i < node.children.length; i++) if (arrIsWithin(node.children[i], arr)) return true;
     return false;
 }
-// A bin can't be dropped into itself or into anything it contains.
-function moveTargetOk(node, t) {
-    if (!t) return false;
-    if (t.kind === "row") {
-        var target = flatRows[t.index].node;
-        return target !== node && !isDescendant(node, target);
-    }
-    var res = resolveInsert(t.index, t.depth);
-    if (res.childOf) return res.childOf !== node && !isDescendant(node, res.childOf);
-    return !arrIsWithin(node, res.arr);
-}
 function doMove(node, res) {
     if (res.childOf && (res.childOf === node || isDescendant(node, res.childOf))) {
         setStatus("Can’t move “" + node.name + "” inside itself.", "error"); return;
@@ -3138,7 +3106,10 @@ function addTopBin() {
 }
 
 // ---- drop disk folders into a gap → a linked bin per folder, at that spot ----
-var MIRROR_MAX_DEPTH = 6;         // safety valve on pathological folder trees
+/* MIRROR_MAX_DEPTH is declared once, further down with the rest of the mirror's
+ * guards. It used to be declared here as 6 as well, and since both are top-level
+ * vars evaluated in order, the later 5 won — so this path had a cap of 5 while
+ * its author wrote 6, and nothing said so. */
 
 // Immediate subfolders, visible ones only (skips .DS_Store & friends).
 function countSubfoldersDeep(path, depth) {
@@ -4064,12 +4035,22 @@ function logWhyNothing(result) {
     var r = String(result || "");
     var seen = /seen=(\d+)/.exec(r), skip = /skipped-type=(\d+)/.exec(r);
     if (!seen) return "";
+    var ren = /renamed-in-bin=(\d+)/.exec(r);
     var n = parseInt(seen[1], 10), st = skip ? parseInt(skip[1], 10) : 0;
+    var rn = ren ? parseInt(ren[1], 10) : 0;
     if (!n) return "the folder was empty";
     if (st >= n) return n + (n === 1 ? " file, but it is not" : " files, but none are") +
         " a type Premiere imports";
     var dup = n - st;
-    return dup + (dup === 1 ? " file was" : " files were") + " already in this bin" +
+    /* "Already in" and "already in under a different name" look identical from
+     * the outside, and the second is the one that used to produce a duplicate.
+     * Worth naming, so the answer is not just "nothing happened". */
+    var tail = rn
+        ? " already in this bin" + (rn === dup
+            ? (dup === 1 ? ", under a different name" : ", under different names")
+            : " (" + rn + " of them renamed in the bin)")
+        : " already in this bin";
+    return dup + (dup === 1 ? " file was" : " files were") + tail +
         (st ? ", and " + st + (st === 1 ? " is not a type" : " are not types") + " Premiere imports" : "");
 }
 /* Extension \u2192 the same four colours the contents list uses, so a clip looks the
@@ -4296,9 +4277,6 @@ function openLogFor(np) {
 
 function isWindows() { return /win/i.test(navigator.platform || ""); }
 function modKeyName() { return isWindows() ? "Alt" : "⌘"; }
-// Option on a Mac IS Alt; the key name is the only difference worth showing.
-function altKeyName() { return isWindows() ? "Alt" : "Option"; }
-
 /* ====================================================================
  *  IMPORT FROM… — Option-click Import to pick which bins to pull from
  * ====================================================================
@@ -4691,12 +4669,16 @@ var projectQueryBusy = false;
  * project has spent days on. And the result says it was automatic, so files
  * appearing on their own is never a mystery.
  *
- * Off in the gear for anyone who would rather decide themselves.
+ * Off unless switched on in the gear.
  */
 var AUTOIMPORT_KEY = "aip_autoImportOnOpen";
 var AUTO_IMPORT_DELAY = 1500;
 var autoImportKey = null;          // one automatic run per project, per session
-function autoImportOn() { return localStorage.getItem(AUTOIMPORT_KEY) !== "0"; }
+/* Off by default. Opening a project should not move files on its own — the same
+ * reasoning that made mirroring opt-in, and the two together were what made
+ * opening a project rebuild the panel. Import is a button; this makes it a
+ * button that also runs itself, for anyone who wants that. */
+function autoImportOn() { return localStorage.getItem(AUTOIMPORT_KEY) === "1"; }
 function setAutoImport(on) {
     localStorage.setItem(AUTOIMPORT_KEY, on ? "1" : "0");
     syncAutoImportLabel();
@@ -4869,15 +4851,25 @@ function clearPreset() {
 // Apply builderTree into the current project, keeping links/pins where names match.
 function applyPresetToProject() {
     pushUndo("applying the preset");
+    /* A preset owns the structure and the colours. It does NOT own the folder
+     * links, the pins, or whether a bin is in Import — those belong to this
+     * project and are carried across by name. Dropping `skip` here quietly
+     * switched every deliberately-silenced bin back on, which is the sort of
+     * reset you only notice by the files that arrive afterwards. */
     var keep = {};
-    forEachNode(function (n, np) { keep[np.join("\t")] = { folder: n.folder, pinned: n.pinned }; });
+    forEachNode(function (n, np) {
+        keep[np.join("\t")] = { folder: n.folder, pinned: n.pinned, skip: !!n.skip };
+    });
     function build(nodes, prefix) {
         var out = [];
         for (var i = 0; i < nodes.length; i++) {
             var n = nodes[i];
             var p = prefix.concat([n.name]);
             var k = keep[p.join("\t")];
-            out.push({ name: n.name, color: n.color || "", folder: k ? k.folder : "", pinned: k ? k.pinned : false, children: build(n.children || [], p) });
+            var made = { name: n.name, color: n.color || "", folder: k ? k.folder : "",
+                         pinned: k ? k.pinned : false, children: build(n.children || [], p) };
+            if (k && k.skip) made.skip = true;
+            out.push(made);
         }
         return out;
     }

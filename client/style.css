@@ -874,7 +874,6 @@ body.depthCues .trow[data-depth="6"]::after {
 .logFile.tImage .logFileIco { color: #b98cd9; }
 .logFile.tOther .logFileIco { color: #92929b; }
 .logMore { font-size: 10.5px; color: var(--text-3); padding-left: 19px; margin-top: 2px; }
-.logFail { color: var(--danger); font-weight: 600; }
 .logErr {
     display: flex; align-items: flex-start; gap: 6px;
     font-size: 11px; color: #e8968f; line-height: 1.45; margin-bottom: 7px;
@@ -1203,20 +1202,6 @@ body.depthCues .trow[data-depth="6"]::after {
 .dragGhost .dgIcon { display: flex; color: var(--accent); }
 .dragGhost .dgIcon svg { width: 15px; height: 15px; }
 
-/* --- preset builder --- */
-.presetRow { display: flex; gap: 7px; margin-bottom: 10px; }
-.presetRow select {
-    flex: 1; min-width: 0; padding: 8px 9px; font-size: 12px;
-    background: #161618; color: var(--text); border: 1px solid var(--border); border-radius: 7px;
-}
-.presetRow select:focus { outline: none; border-color: var(--accent); }
-.miniBtn {
-    flex: none; display: flex; align-items: center; gap: 5px; padding: 8px 11px;
-    background: transparent; color: var(--text-2); border: 1px solid var(--border);
-    border-radius: 7px; font-size: 12px; transition: 0.12s;
-}
-.miniBtn:hover { color: var(--text); border-color: rgba(255, 255, 255, 0.18); }
-.miniBtn svg { width: 13px; height: 13px; }
 .builderBtns { display: flex; gap: 7px; margin-top: 8px; }
 .ghost2 {
     flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
@@ -1241,8 +1226,6 @@ body.depthCues .trow[data-depth="6"]::after {
 .chItem .chIco { display: flex; color: var(--accent); }
 .chItem .chIco svg { width: 15px; height: 15px; }
 
-/* the tile being dragged, while the others slide around it */
-.pinTile.tileDragging { opacity: 0.45; cursor: grabbing; }
 
 /* --- iOS-style tile lift ------------------------------------------------ */
 /* the slot the tile left behind: keeps the space so nothing reflows */

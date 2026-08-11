@@ -18,6 +18,24 @@ function aip_stripExt(name) {
     return (dot > 0) ? String(name).substring(0, dot) : String(name);
 }
 
+/* One shape for a media path, so two spellings of the same file compare equal.
+ *
+ * macOS is case-insensitive by default, and getMediaPath() has been seen to come
+ * back percent-encoded on some builds - the same trap that made the panel store
+ * file:// URLs and call working folders missing. Trailing slashes and doubled
+ * separators are folded too. ES3 only in here: no arrow functions, no JSON, no
+ * Array methods. */
+function aip_normPath(p) {
+    var t = String(p == null ? "" : p);
+    if (t === "") return "";
+    if (t.indexOf("file://") === 0) t = t.substring(7);
+    if (t.indexOf("%") >= 0) { try { t = decodeURI(t); } catch (eN) {} }
+    t = t.replace(/\\/g, "/");
+    while (t.indexOf("//") >= 0) t = t.replace("//", "/");
+    t = t.replace(/\/+$/, "");
+    return t.toLowerCase();
+}
+
 function aip_getExt(name) {
     var dot = String(name).lastIndexOf(".");
     return (dot >= 0) ? String(name).substring(dot + 1) : "";
@@ -94,10 +112,30 @@ function aip_import(binPath, folderPath, extCsv, colorIndex) {
      */
     var existing = {};
     var existingStems = {};
+    /* ...and by the file each clip actually points at.
+     *
+     * The name is a label, and Premiere lets you change it. Rename a clip in the
+     * bin and its name stops matching the file on disk, so the next Import saw a
+     * new file and brought in a second copy of the same media under a different
+     * name. The media path is the identity, and it survives a rename.
+     *
+     * Both indexes are consulted, not one instead of the other: a file MOVED on
+     * disk keeps its name and would otherwise come back as new. Skipping on
+     * either match can only ever skip more than before, never less.
+     *
+     * A sequence, title or colour matte has no media path and is not indexed -
+     * it can never be a duplicate of a file. */
+    var existingPaths = {};
     for (var i = 0; i < bin.children.numItems; i++) {
-        var nm = String(bin.children[i].name);
+        var it = bin.children[i];
+        var nm = String(it.name);
         existing[nm.toLowerCase()] = true;
         if (aip_getExt(nm) === "") existingStems[nm.toLowerCase()] = true;
+        if (it.type == 2) continue;                      // a bin, not a clip
+        var mp = "";
+        try { if (typeof it.getMediaPath === "function") mp = aip_normPath(it.getMediaPath()); }
+        catch (eM) { mp = ""; }
+        if (mp !== "") existingPaths[mp] = true;
     }
 
     // Build a quick lookup of allowed extensions.
@@ -129,6 +167,8 @@ function aip_import(binPath, folderPath, extCsv, colorIndex) {
         var noExt = aip_stripExt(base).toLowerCase();
         if (existing[base.toLowerCase()]) continue;      // same file already in the bin
         if (existingStems[noExt]) continue;              // in as an extension-less item
+        // Already in under another name: renamed in the bin after being imported.
+        if (existingPaths[aip_normPath(file.fsName)]) continue;
         toImport.push(file.fsName);
     }
 
@@ -137,16 +177,20 @@ function aip_import(binPath, folderPath, extCsv, colorIndex) {
          * comes back when the folder holds nothing this panel recognises, and
          * the two are indistinguishable from the outside. Report the counts so
          * the panel can tell them apart. */
-        var seen = 0, wrongExt = 0;
+        var seen = 0, wrongExt = 0, renamed = 0;
         for (var z = 0; z < files.length; z++) {
             var zf = files[z];
             if (!(zf instanceof File)) continue;
             var zb = decodeURI(zf.name);
             if (zb.charAt(0) === ".") continue;
             seen++;
-            if (!allowed[aip_getExt(zb).toLowerCase()]) wrongExt++;
+            if (!allowed[aip_getExt(zb).toLowerCase()]) { wrongExt++; continue; }
+            /* Counted separately so the panel can say "already in, under another
+             * name" rather than leaving it to look like a plain duplicate. */
+            if (!existing[zb.toLowerCase()] && existingPaths[aip_normPath(zf.fsName)]) renamed++;
         }
-        return "0" + AIP_FIELD_SEP + "seen=" + seen + " skipped-type=" + wrongExt;
+        return "0" + AIP_FIELD_SEP + "seen=" + seen + " skipped-type=" + wrongExt +
+               (renamed ? " renamed-in-bin=" + renamed : "");
     }
 
     var root = app.project.rootItem;
@@ -391,94 +435,6 @@ function aip_climbOut() {
         if (typeof root.select === "function") { root.select(); return "root"; }
     } catch (e3) {}
     return "";
-}
-
-/*
- * Ask this Premiere what it actually exposes.
- *
- * Three fixes for "jump to a bin" have now done nothing, each built on the
- * assumption that select() causes the Project panel to navigate. That
- * assumption came from Adobe's docs and forum, not from this machine. This
- * reports what is really here so the next attempt is based on fact.
- *
- * READ ONLY. It lists names via ExtendScript's reflect and reads a handful of
- * documented properties. It never calls a method it discovered — invoking an
- * unknown QE function against a live project is exactly how you lose someone's
- * afternoon. app.enableQE() itself is the one call made, and it is the standard
- * way in; if that is unwelcome the QE section simply reports as unavailable.
- */
-function aip_probeQE() {
-    var out = [];
-    function say(s) { out.push(String(s)); }
-    function names(obj, what) {
-        var list = [];
-        try {
-            var r = obj.reflect;
-            var arr = (what === "methods") ? r.methods : r.properties;
-            for (var i = 0; i < arr.length; i++) list.push(String(arr[i].name));
-        } catch (e) { return "(reflect unavailable: " + e.toString() + ")"; }
-        list.sort();
-        return list.join(", ");
-    }
-
-    say("=== Omni Link — bin navigation probe ===");
-    try { say("Premiere version: " + app.version); } catch (e1) { say("version: ?"); }
-    try { say("project: " + app.project.name); } catch (e2) { say("project: none open"); }
-
-    say("");
-    say("--- app methods ---");
-    say(names(app, "methods"));
-    say("");
-    say("--- app.project methods ---");
-    try { say(names(app.project, "methods")); } catch (e3) { say("(none)"); }
-
-    // A real bin, so the reflection is of the thing we actually need to move to.
-    var bin = null, clip = null;
-    try {
-        var kids = app.project.rootItem.children;
-        for (var i = 0; i < kids.numItems; i++) {
-            var it = kids[i];
-            if (!it) continue;
-            if (bin === null && it.type == 2) bin = it;
-            if (clip === null && it.type != 2) clip = it;
-        }
-    } catch (e4) {}
-
-    say("");
-    say("--- a bin ProjectItem ---");
-    if (bin === null) {
-        say("(no top-level bin in this project to inspect)");
-    } else {
-        say("name: " + bin.name);
-        say("methods: " + names(bin, "methods"));
-        say("properties: " + names(bin, "properties"));
-    }
-    say("");
-    say("--- loose files at the project root ---");
-    say(clip === null
-        ? "NONE — nothing at root to climb out with (this alone breaks the current fix)"
-        : "yes, e.g. " + clip.name);
-
-    say("");
-    say("--- QE (undocumented) ---");
-    var qeOK = false;
-    try {
-        if (typeof app.enableQE === "function") { app.enableQE(); qeOK = true; }
-        else say("app.enableQE is not a function");
-    } catch (e5) { say("enableQE threw: " + e5.toString()); }
-    if (qeOK) {
-        try {
-            say("qe methods: " + names(qe, "methods"));
-            say("qe properties: " + names(qe, "properties"));
-        } catch (e6) { say("qe object unreachable: " + e6.toString()); }
-        try {
-            say("qe.project methods: " + names(qe.project, "methods"));
-        } catch (e7) { say("qe.project unreachable: " + e7.toString()); }
-    }
-
-    say("");
-    say("=== end ===");
-    return out.join("\n");
 }
 
 function aip_revealBin(binPath) {
@@ -776,7 +732,6 @@ function aip_scanProject() {
 }
 
 // Kept so an older installed panel talking to a newer host still works.
-function aip_readProject() { return aip_scanProject(); }
 
 /*
  * List what is directly inside one bin, so the panel can show a bin's contents
