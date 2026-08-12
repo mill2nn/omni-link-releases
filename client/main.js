@@ -22,7 +22,7 @@ var cs = new CSInterface();
 // Bump this AND ExtensionBundleVersion in CSXS/manifest.xml together — the
 // shareable-zip script fails the build if the two ever disagree, because
 // "which version are you on?" has to have one answer.
-var VERSION = "1.3.15";
+var VERSION = "1.3.16";
 
 /*
  * What Import picks up. A format missing from here is skipped in silence — the
@@ -4574,6 +4574,11 @@ function organisePutBack() {
  * anything should not learn how on the strength of a filename match.
  */
 var REVERT_BIN = "!Delete me";        // the ! sorts it to the top of the project
+/* How many past imports are offered. Three, because three chips are one row and
+ * eight were three rows — on a dialog whose whole complaint was that chrome had
+ * crowded out the list. Reverting something from this morning is not a thing
+ * anyone does; ⚙ > Import log still lists all 60 runs for looking at. */
+var REVERT_RUNS_SHOWN = 3;
 
 /* Runs worth offering: ones that brought files in AND recorded which.
  *
@@ -4764,7 +4769,7 @@ function showRevertDialog(runs, idx, clips, trunc) {
         '</div>';
     if (runs.length > 1) {
         h += '<div class="revertRuns">';
-        for (var s = 0; s < runs.length && s < 8; s++) {
+        for (var s = 0; s < runs.length && s < REVERT_RUNS_SHOWN; s++) {
             h += '<button class="revertRun' + (s === idx ? " on" : "") + '" data-idx="' + s + '">' +
                 esc(fmtWhen(runs[s].at)) + ' · ' + revertFileCount(runs[s]) + '</button>';
         }

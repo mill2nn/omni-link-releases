@@ -1,5 +1,5 @@
 {
-  "version": "1.3.15",
-  "notes": "Revert import: see what an import brought in and move it to a bin you can delete, grouped by bin",
+  "version": "1.3.16",
+  "notes": "Revert import shows the three most recent imports instead of eight, giving the file list back two rows",
   "files": ["client/index.html", "client/main.js", "client/style.css", "client/CSInterface.js", "jsx/host.jsx", "CSXS/manifest.xml"]
 }
