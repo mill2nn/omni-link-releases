@@ -681,6 +681,10 @@ body.depthCues .trow[data-depth="6"]::after {
    permanent setting outranks a one-run choice. */
 .adoptFol.offTag { color: var(--text-3); font-style: normal; }
 .pickRow.off { opacity: 0.5; }
+/* An Organise row shows the clip and, under it, where it is going. The arrow is
+   part of the subtitle rather than a column, so a long bin path ellipsises
+   instead of pushing the name out. */
+.orgRow .pickIn { color: var(--text-2); }
 .pickRow.off .adoptLabel { cursor: default; }
 
 /* Already in the panel: adopting it again is harmless but is not what you came

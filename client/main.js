@@ -22,7 +22,7 @@ var cs = new CSInterface();
 // Bump this AND ExtensionBundleVersion in CSXS/manifest.xml together — the
 // shareable-zip script fails the build if the two ever disagree, because
 // "which version are you on?" has to have one answer.
-var VERSION = "1.3.13";
+var VERSION = "1.3.14";
 
 /*
  * What Import picks up. A format missing from here is skipped in silence — the
@@ -687,6 +687,8 @@ function renderAll() {
     applyCollapsed();
     applyDepthCues();
     syncSkipAll();
+    syncUndoBtn();
+    syncOrganiseBack();
     syncAutoImportLabel();
     syncContentsView();
     var total = 0;
@@ -4278,6 +4280,266 @@ function openLogFor(np) {
 function isWindows() { return /win/i.test(navigator.platform || ""); }
 function modKeyName() { return isWindows() ? "Alt" : "⌘"; }
 /* ====================================================================
+ *  ORGANISE — put clips in the bin whose folder they came from
+ * ====================================================================
+ *
+ * No guessing involved. Every clip knows the file it points at, and every bin
+ * knows the folder it is linked to, so "where does this clip belong" has one
+ * exact answer: the bin whose folder contains that file.
+ *
+ * The DEEPEST match wins. A clip in .../VO/13x belongs in the bin linked to
+ * .../VO/13x, not the one linked to .../VO — otherwise every clip in the project
+ * would pile into the shallowest bin that happens to contain them all.
+ *
+ * It proposes and stops. Moving clips around someone's project is not something
+ * to do on a button press with no list first, and the panel's own Undo cannot
+ * reverse a moveBin — so the way back is a plan kept in memory and offered
+ * afterwards, not a promise that Premiere will undo it.
+ */
+var organiseBack = null;        // {items:[{id,name,to}], at} — how to put them back
+
+// Folder comparison is case-insensitive because macOS is, and trailing
+// separators are noise.
+function orgFold(p) {
+    return normalizePath(p).replace(/\/+$/, "").toLowerCase();
+}
+function orgInside(folder, file) {
+    if (!folder || !file) return false;
+    return file.indexOf(folder + "/") === 0;
+}
+
+/* Bins that can own a clip: linked, and not switched out of Import. A
+ * switched-off branch means "leave this alone", and that has to include not
+ * moving things into it. */
+function orgTargets() {
+    var out = [], off = skippedNodes();
+    forEachNode(function (n, np) {
+        if (!n.folder) return;
+        /* Switched-off bins are still listed, flagged. Leaving them out entirely
+         * made the deepest match fall through to an ancestor, so a clip living in
+         * a silenced branch got pulled OUT of it and into its parent — the
+         * opposite of "leave this alone". They are matched and then declined. */
+        out.push({ path: np.join("\t"), folder: orgFold(n.folder), off: off.has(n) });
+    });
+    // Longest folder first, so the deepest match is found before its ancestors.
+    out.sort(function (a, b) { return b.folder.length - a.folder.length; });
+    return out;
+}
+
+/* Parse one survey record: nodeId | binPath | name | isSequence | mediaPath */
+function orgParseSurvey(text) {
+    var body = String(text || "");
+    if (body.indexOf("OK:") === 0) body = body.substring(3);
+    else if (body.indexOf("TRUNC:") === 0) body = body.substring(6);
+    var lines = body === "" ? [] : body.split("\n"), out = [];
+    for (var i = 0; i < lines.length; i++) {
+        if (lines[i] === "") continue;
+        var f = lines[i].split(FIELD_SEP);
+        if (f.length < 5) continue;
+        out.push({ id: f[0], bin: f[1], name: f[2], seq: f[3] === "1", media: f[4] });
+    }
+    return out;
+}
+
+/* What would move, and where to. Everything left alone is left alone silently:
+ * this returns only the clips it has an opinion about. */
+function orgProposals(clips) {
+    var targets = orgTargets(), out = [];
+    for (var i = 0; i < clips.length; i++) {
+        var c = clips[i];
+        if (c.seq) continue;                       // a sequence is not a file
+        if (!c.media) continue;                    // nothing to reason from
+        var file = orgFold(c.media);
+        var hit = null;
+        for (var t = 0; t < targets.length; t++) {
+            if (orgInside(targets[t].folder, file)) { hit = targets[t]; break; }
+        }
+        if (!hit) continue;                        // outside every linked folder
+        if (hit.off) continue;                     // its own branch is switched off
+        if (hit.path === c.bin) continue;          // already where it belongs
+        out.push({ id: c.id, name: c.name, from: c.bin, to: hit.path });
+    }
+    return out;
+}
+
+function organiseNow() {
+    if (!treeData) return;
+    setStatus("Looking at every clip in the project…", "");
+    cs.evalScript("aip_surveyClips()", function (res) {
+        var txt = String(res == null ? "" : res);
+        if (txt.indexOf("ERR:") === 0) { setStatus("⚠ " + txt.substring(4), "error"); return; }
+        var clips = orgParseSurvey(txt);
+        if (!clips.length) { setStatus("No clips in this project yet.", ""); return; }
+        var plan = orgProposals(clips);
+        if (!plan.length) {
+            setStatus("✓ Every clip is already in the bin its folder belongs to.", "ok",
+                "Looked at " + clips.length + " clip" + (clips.length === 1 ? "" : "s") + ".");
+            return;
+        }
+        showOrganiseDialog(plan, clips.length, txt.indexOf("TRUNC:") === 0);
+    });
+}
+
+function showOrganiseDialog(plan, seen, trunc) {
+    var chosen = {};
+    for (var i = 0; i < plan.length; i++) chosen[plan[i].id] = true;
+
+    var ov = document.createElement("div");
+    ov.className = "modalOv";
+    var h = '<div class="modal adopt pick"><div class="modalTitle">Clips in the wrong bin</div>' +
+        '<div class="modalBody">' + plan.length + ' of ' + seen + ' clip' + (seen === 1 ? "" : "s") +
+        ' sit somewhere other than the bin their folder is linked to.' +
+        (trunc ? " Showing the first " + seen + "." : "") +
+        ' Nothing moves until you press Move.</div>' +
+        '<div class="adoptFind">' + ICON_SEARCH +
+            '<input class="adoptFindInput" type="text" placeholder="Filter clips…" spellcheck="false" ' +
+            'data-tip="Narrow by clip name, or by either bin." />' +
+            '<button class="adoptFindClear" style="display:none;" aria-label="Clear the filter">' + ICON_XSMALL + '</button>' +
+        '</div>' +
+        '<div class="adoptTools">' +
+            '<span class="adoptCount"></span>' +
+            '<button class="adoptAll" data-tip="Tick every clip.">Tick all</button>' +
+            '<button class="adoptNone" data-tip="Tick none of them.">Untick all</button>' +
+        '</div>' +
+        '<div class="adoptList">';
+    for (var j = 0; j < plan.length; j++) {
+        var p = plan[j];
+        var fromTxt = p.from === "" ? "the project root" : p.from.split("\t").join(" / ");
+        h += '<div class="adoptRow pickRow orgRow" data-id="' + esc(p.id) +
+            '" data-hay="' + esc((p.name + " " + fromTxt + " " + p.to.split("\t").join(" ")).toLowerCase()) + '">' +
+            '<label class="adoptLabel">' +
+            '<input type="checkbox" checked data-id="' + esc(p.id) + '">' +
+            '<span class="pickName">' + esc(p.name) +
+                '<span class="pickIn">' + esc(fromTxt) + ' → ' + esc(p.to.split("\t").join(" / ")) + '</span>' +
+            '</span></label></div>';
+    }
+    h += '</div><div class="modalBtns">' +
+        '<button class="mbtn adoptGo orgGo">Move</button></div>' +
+        '<button class="modalCancel">Cancel</button></div>';
+    ov.innerHTML = h;
+    document.body.appendChild(ov);
+
+    var boxes = ov.querySelectorAll(".adoptList input");
+    var rows = ov.querySelectorAll(".orgRow");
+    var goBtn = ov.querySelector(".orgGo");
+    var countEl = ov.querySelector(".adoptCount");
+    var findInput = ov.querySelector(".adoptFindInput");
+    var findClear = ov.querySelector(".adoptFindClear");
+
+    function ticked() {
+        var out = [];
+        for (var t = 0; t < plan.length; t++) if (chosen[plan[t].id]) out.push(plan[t]);
+        return out;
+    }
+    function shownNow() {
+        var k = 0;
+        for (var r = 0; r < rows.length; r++) if (rows[r].style.display !== "none") k++;
+        return k;
+    }
+    function sync() {
+        var n = ticked().length;
+        goBtn.textContent = n ? ("Move " + n + " clip" + (n === 1 ? "" : "s")) : "Move";
+        goBtn.disabled = !n;
+        goBtn.classList.toggle("off", !n);
+        var term = findInput.value.replace(/^\s+|\s+$/g, "");
+        countEl.textContent = n + " of " + plan.length + " ticked" +
+            (term ? " · showing " + shownNow() : "");
+    }
+    for (var b = 0; b < boxes.length; b++) {
+        (function (box) {
+            box.addEventListener("change", function () {
+                chosen[box.getAttribute("data-id")] = box.checked;
+                sync();
+            });
+        })(boxes[b]);
+    }
+    // The whole list, not the filtered view — same rule as everywhere else here.
+    function setAll(on) {
+        for (var k2 = 0; k2 < boxes.length; k2++) {
+            boxes[k2].checked = on;
+            chosen[boxes[k2].getAttribute("data-id")] = on;
+        }
+        sync();
+    }
+    ov.querySelector(".adoptAll").onclick = function () { setAll(true); };
+    ov.querySelector(".adoptNone").onclick = function () { setAll(false); };
+
+    function applyFilter() {
+        var term = findInput.value.replace(/^\s+|\s+$/g, "").toLowerCase();
+        findClear.style.display = term ? "flex" : "none";
+        for (var r = 0; r < rows.length; r++) {
+            var hay = rows[r].getAttribute("data-hay") || "";
+            rows[r].style.display = (!term || hay.indexOf(term) >= 0) ? "" : "none";
+        }
+        sync();
+    }
+    findInput.addEventListener("input", applyFilter);
+    findInput.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); findInput.value = ""; applyFilter(); }
+    });
+    findClear.onclick = function () { findInput.value = ""; applyFilter(); findInput.focus(); };
+
+    function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+    ov.querySelector(".modalCancel").onclick = close;
+    goBtn.onclick = function () {
+        if (goBtn.disabled) return;
+        var go = ticked();
+        close();
+        moveClips(go, false);
+    };
+    sync();
+}
+
+/* Send the moves, then keep the reverse plan.
+ *
+ * `back` marks the put-back run so it does not record a plan of its own — one
+ * level of "put it back" is a safety net, two is a loop. */
+function moveClips(list, back) {
+    if (!list.length) return;
+    var lines = [];
+    for (var i = 0; i < list.length; i++) lines.push(list[i].id + FIELD_SEP + list[i].to);
+    setStatus(back ? "Putting them back…" : "Moving " + list.length + "…", "");
+    cs.evalScript("aip_moveClips(" + q(lines.join("\n")) + ")", function (res) {
+        var txt = String(res == null ? "" : res);
+        if (txt.indexOf("ERR:") === 0) { setStatus("⚠ " + txt.substring(4), "error"); return; }
+        var parts = txt.split(FIELD_SEP);
+        var moved = parseInt(parts[0], 10);
+        if (isNaN(moved)) { setStatus("Premiere didn’t run the move (" + txt + ")", "error"); return; }
+        var failed = parts[1] ? parts[1] : "";
+
+        if (back) {
+            organiseBack = null;
+        } else {
+            /* The way back, from where each clip actually came. Held for the
+             * session only: a plan that outlived the project it describes would
+             * move clips somewhere they never were. */
+            var undo = [];
+            for (var u = 0; u < list.length; u++) undo.push({ id: list[u].id, name: list[u].name, to: list[u].from });
+            organiseBack = { items: undo, at: new Date().toISOString() };
+        }
+        syncOrganiseBack();
+
+        var msg = (back ? "✓ Put " : "✓ Moved ") + moved + " clip" + (moved === 1 ? "" : "s");
+        if (!back && moved) msg += " · ⚙ > Put clips back to undo it";
+        setStatus(failed ? (msg + " · couldn’t move " + failed) : (msg + "."),
+            failed ? "error" : "ok",
+            back ? "" : "The panel’s Undo button cannot reverse a move inside Premiere, " +
+                        "which is why this is offered separately.");
+    });
+}
+function syncOrganiseBack() {
+    var el = document.getElementById("giOrganiseBack");
+    if (!el) return;
+    var n = organiseBack ? organiseBack.items.length : 0;
+    el.style.display = n ? "flex" : "none";
+    el.querySelector("span").textContent = "Put " + n + " clip" + (n === 1 ? "" : "s") + " back";
+}
+function organisePutBack() {
+    if (!organiseBack) return;
+    moveClips(organiseBack.items, true);
+}
+
+/* ====================================================================
  *  IMPORT FROM… — Option-click Import to pick which bins to pull from
  * ====================================================================
  *
@@ -4702,6 +4964,21 @@ function maybeAutoImport(key) {
     }, AUTO_IMPORT_DELAY);
 }
 
+/* Dropped whenever the project changes underneath us. Each of these is a
+ * promise about a project that is no longer open. */
+function resetSessionState() {
+    undoStack = [];
+    syncUndoBtn();
+    organiseBack = null;
+    syncOrganiseBack();
+    clearFresh();
+    adoptScanKey = null;
+    logFilterBin = null;
+    setSearchTerm("");
+    var inp = document.getElementById("searchInput");
+    if (inp) inp.value = "";
+}
+
 function refreshProject(force) {
     if (projectQueryBusy) return;
     projectQueryBusy = true;
@@ -4709,6 +4986,13 @@ function refreshProject(force) {
         projectQueryBusy = false;
         key = (key && key !== "") ? key : "__noproject__";
         if (!force && key === currentProjectKey) return;
+        /* Everything held for the session belongs to the project it was built
+         * from. Undo and the Organise put-back both address the OLD project by
+         * path and by nodeId, and undoLast writes a whole tree with saveTree() —
+         * so a step left over from project A, applied while B is open, replaces
+         * B's structure with A's. Premiere switches projects on window focus, so
+         * this needs no deliberate action to reach. */
+        if (key !== currentProjectKey) resetSessionState();
         currentProjectKey = key;
         setProjectLabel(key);
         var t = loadProjectTree(key);
@@ -4760,6 +5044,10 @@ function autoAdoptOrChoose(key) {
             return;
         }
         var recs = parseScan(res.substring(trunc ? 6 : 3));
+        // The project can change while Premiere is answering. maybeAutoImport and
+        // openContents both guard for this; this path did not, and its two
+        // outcomes each overwrite a saved tree.
+        if (currentProjectKey !== key) { adoptScanKey = null; return; }
         if (!recs.length) { showBlankChooser(); return; }    // nothing to adopt → ask
         adoptPaths(recs, trunc ? "trunc" : "auto");
     });
@@ -4850,6 +5138,35 @@ function clearPreset() {
 }
 // Apply builderTree into the current project, keeping links/pins where names match.
 function applyPresetToProject() {
+    /* This REPLACES the structure: a bin outside the preset is deleted, and its
+     * folder link, colour, pin and Import switch go with it. Clearing the preset
+     * and resetting the structure both ask first, and they destroy less. Naming
+     * the count matters more than the warning does - "8 bins" versus "310 bins"
+     * is the difference between a routine action and a disaster. */
+    var have = 0, keepNames = {};
+    (function names(list) {
+        for (var i = 0; i < list.length; i++) {
+            keepNames[list[i].name.toLowerCase()] = true;
+            if (list[i].children) names(list[i].children);
+        }
+    })(builderTree || []);
+    var losing = [];
+    forEachNode(function (n, np) {
+        have++;
+        if (!keepNames[String(n.name).toLowerCase()]) losing.push(np.join(" / "));
+    });
+    if (!losing.length) { applyPresetNow(); return; }
+    var lead = losing.length + " of this project’s " + have + " bin" +
+        (have === 1 ? "" : "s") + " are not in the preset and will be removed";
+    confirmModal("Replace this project’s structure?",
+        lead + ", along with their folder links, colours, pins and Import switches. " +
+        "Undo puts them back." +
+        (losing.length <= 4 ? "<br><br>" + esc(losing.join("<br>")) : ""),
+        "Replace", true, function (ok) {
+            if (ok) applyPresetNow();
+        });
+}
+function applyPresetNow() {
     pushUndo("applying the preset");
     /* A preset owns the structure and the colours. It does NOT own the folder
      * links, the pins, or whether a bin is in Import — those belong to this
@@ -5408,7 +5725,15 @@ var UPDATE_OWNER = "mill2nn";
 var UPDATE_REPO = "omni-link-releases";
 var UPDATE_BRANCH = "main";
 // Fallback list, used only if latest.json doesn't name its own files.
-var UPDATE_FILES = ["client/index.html", "client/main.js", "client/style.css", "jsx/host.jsx", "CSXS/manifest.xml"];
+/* The fallback list, used only when latest.json carries no `files` array.
+ *
+ * It was missing client/CSInterface.js, which the publish script's own FILES
+ * list includes and whose comment says the difference is a panel that cannot
+ * talk to Premiere at all. In practice latest.json always lists the files, so
+ * this never bit - but a fallback that produces a broken panel is worse than no
+ * fallback, and run-all.js now fails if the two lists disagree. */
+var UPDATE_FILES = ["client/index.html", "client/main.js", "client/style.css",
+                    "client/CSInterface.js", "jsx/host.jsx", "CSXS/manifest.xml"];
 var MAX_FILE_BYTES = 2 * 1024 * 1024;
 var HTTP_TIMEOUT_MS = 15000;
 
@@ -5751,6 +6076,8 @@ document.addEventListener("DOMContentLoaded", function () {
         refreshProject(true); setStatus("Reloaded for this project.", "");
     };
     document.getElementById("tbUndo").onclick = undoLast;
+    document.getElementById("giOrganise").onclick = function () { closeGear(); organiseNow(); };
+    document.getElementById("giOrganiseBack").onclick = function () { closeGear(); organisePutBack(); };
     document.getElementById("giScan").onclick = function () { closeGear(); scanFoldersNow(); };
     document.getElementById("giMirror").onclick = function () {
         closeGear();

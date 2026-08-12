@@ -128,10 +128,16 @@ function aip_import(binPath, folderPath, extCsv, colorIndex) {
     var existingPaths = {};
     for (var i = 0; i < bin.children.numItems; i++) {
         var it = bin.children[i];
+        /* A bin is not a file and must not enter EITHER index. It used to be
+         * indexed by name, and aip_getExt() is "" for any dotless name, so a
+         * sub-bin called "v1" put "v1" in the stem index and blocked v1.mp4 in
+         * the same folder for ever - exactly the shape mirroring produces. The
+         * zero-report then counted it as a duplicate, so the log said "already
+         * in this bin" about a file that was not in it. */
+        if (it.type == 2) continue;
         var nm = String(it.name);
         existing[nm.toLowerCase()] = true;
         if (aip_getExt(nm) === "") existingStems[nm.toLowerCase()] = true;
-        if (it.type == 2) continue;                      // a bin, not a clip
         var mp = "";
         try { if (typeof it.getMediaPath === "function") mp = aip_normPath(it.getMediaPath()); }
         catch (eM) { mp = ""; }
@@ -698,12 +704,114 @@ function aip_binFolder(bin) {
     return seen;
 }
 
+var AIP_SURVEY_MAX = 5000;       // a project this size is already unusual
+
+/* Every clip in the project, and the file it points at.
+ *
+ * One record per clip, fields separated by AIP_FIELD_SEP because the bin path
+ * itself is tab-joined and a tab here would split it:
+ *
+ *     nodeId | binPath | name | isSequence | mediaPath
+ *
+ * Bins are walked but not reported - the panel already knows the structure. A
+ * sequence, title or colour matte has no file, so it is flagged and the panel
+ * leaves it where it is. An item whose nodeId cannot be read is skipped: it
+ * could not be addressed again afterwards, so proposing to move it would be
+ * proposing something that cannot be carried out.
+ */
+function aip_surveyClips() {
+    if (!app.project) return "ERR:No project open";
+    var out = [], hit = false;
+    function walk(parent, prefix, depth) {
+        /* Truncation, exactly like the count cap below. Returning quietly
+         * here reported a partial answer with an OK: prefix, and the panel
+         * then presented it as the whole project. */
+        if (depth > AIP_READ_MAX_DEPTH) { hit = true; return; }
+        var kids;
+        try { kids = parent.children; } catch (e) { return; }
+        if (!kids) return;
+        for (var i = 0; i < kids.numItems; i++) {
+            if (out.length >= AIP_SURVEY_MAX) { hit = true; return; }
+            var item;
+            try { item = kids[i]; } catch (e2) { continue; }
+            if (!item) continue;
+            var nm = aip_trim(String(item.name)).replace(/[\t\r\n]/g, " ");
+            if (item.type == 2) {                       // a bin: go into it
+                if (nm === "") continue;
+                walk(item, prefix === "" ? nm : prefix + "\t" + nm, depth + 1);
+                continue;
+            }
+            var id = "";
+            try { id = String(item.nodeId); } catch (e3) { id = ""; }
+            if (id === "") continue;
+            var mp = "";
+            try { if (typeof item.getMediaPath === "function") mp = String(item.getMediaPath()); }
+            catch (e4) { mp = ""; }
+            var seq = false;
+            try { if (typeof item.isSequence === "function") seq = !!item.isSequence(); }
+            catch (e5) { seq = false; }
+            out.push(id + AIP_FIELD_SEP + prefix + AIP_FIELD_SEP + nm + AIP_FIELD_SEP +
+                     (seq ? "1" : "0") + AIP_FIELD_SEP + mp);
+        }
+    }
+    try { walk(app.project.rootItem, "", 1); }
+    catch (e6) { return "ERR:" + e6.toString(); }
+    if (out.length === 0) return "OK:";
+    return (hit ? "TRUNC:" : "OK:") + out.join("\n");
+}
+
+/* Move clips, one per line: nodeId | targetBinPath.
+ *
+ * Every item is indexed by nodeId in ONE walk first, so moving two hundred clips
+ * is one pass over the project rather than two hundred. The moves happen after
+ * that walk finishes, never during it - reparenting while iterating children is
+ * how a loop starts skipping items.
+ *
+ * Returns moved-count | the names it could not move, so the panel can say which
+ * rather than reporting a number that quietly does not add up.
+ */
+function aip_moveClips(blob) {
+    if (!app.project) return "ERR:No project open";
+    var byId = {};
+    (function index(parent, depth) {
+        if (depth > AIP_READ_MAX_DEPTH) return;
+        var kids;
+        try { kids = parent.children; } catch (e) { return; }
+        if (!kids) return;
+        for (var i = 0; i < kids.numItems; i++) {
+            var it;
+            try { it = kids[i]; } catch (e2) { continue; }
+            if (!it) continue;
+            var id = "";
+            try { id = String(it.nodeId); } catch (e3) { id = ""; }
+            if (id !== "") byId[id] = it;
+            if (it.type == 2) index(it, depth + 1);
+        }
+    })(app.project.rootItem, 1);
+
+    var lines = String(blob).split("\n"), moved = 0, failed = [];
+    for (var L = 0; L < lines.length; L++) {
+        if (lines[L] === "") continue;
+        var parts = lines[L].split(AIP_FIELD_SEP);
+        var item = byId[parts[0]];
+        if (!item) { failed.push("(a clip that is no longer there)"); continue; }
+        var bin = aip_ensureBinPath(String(parts[1] || "").split("\t"));
+        if (bin === null) { failed.push(String(item.name)); continue; }
+        try { item.moveBin(bin); moved++; }
+        catch (eM) { failed.push(String(item.name)); }
+    }
+    return "" + moved + AIP_FIELD_SEP + failed.join(" | ");
+}
+
 function aip_scanProject() {
     if (!app.project) return "ERR:No project open";
     var out = [], hit = false;
 
     function walk(parent, prefix, depth) {
-        if (depth > AIP_READ_MAX_DEPTH) return;
+        /* Truncation, exactly like the count cap below. Returning quietly
+         * here reported a partial answer with an OK: prefix, and the panel
+         * then presented it as the whole project. */
+        if (depth > AIP_READ_MAX_DEPTH) { hit = true; return; }
         var kids;
         try { kids = parent.children; } catch (e) { return; }
         if (!kids) return;
