@@ -22,7 +22,7 @@ var cs = new CSInterface();
 // Bump this AND ExtensionBundleVersion in CSXS/manifest.xml together — the
 // shareable-zip script fails the build if the two ever disagree, because
 // "which version are you on?" has to have one answer.
-var VERSION = "1.3.14";
+var VERSION = "1.3.15";
 
 /*
  * What Import picks up. A format missing from here is skipped in silence — the
@@ -688,6 +688,7 @@ function renderAll() {
     applyDepthCues();
     syncSkipAll();
     syncUndoBtn();
+    syncRevertBtn();
     syncOrganiseBack();
     syncAutoImportLabel();
     syncContentsView();
@@ -1895,8 +1896,12 @@ function appendLog(entry) {
     log.unshift(entry);
     while (log.length > LOG_MAX) log.pop();
     try { localStorage.setItem(logKey(), JSON.stringify(log)); } catch (e) {}
+    revertInvalidate();               // Revert import reads this log; it moved
 }
-function clearLog() { try { localStorage.removeItem(logKey()); } catch (e) {} }
+function clearLog() {
+    try { localStorage.removeItem(logKey()); } catch (e) {}
+    revertInvalidate();
+}
 
 /* Which bins just received files, and how many. Held in memory only: it marks
  * "since the last import", which stops meaning anything once the panel reloads.
@@ -3101,11 +3106,10 @@ function addChild(node) {
     node.open = true;                 // unfold so the new sub-bin is visible
     expandTree(); saveTree(); renderAll();
 }
-function addTopBin() {
-    pushUndo("add a bin");
-    treeData.push({ name: "New bin", folder: "", color: "", pinned: false, children: [] });
-    expandTree(); saveTree(); renderAll();
-}
+/* addTopBin() lived here and is gone with the toolbar button that called it. An
+ * empty unlinked top-level bin now comes from dropping a folder (which also links
+ * it — the thing you wanted anyway), the empty-state drop zone, right-click ▸ Add
+ * sub-bin, or Read. The preset builder keeps its own, builderAddTop. */
 
 // ---- drop disk folders into a gap → a linked bin per folder, at that spot ----
 /* MIRROR_MAX_DEPTH is declared once, further down with the rest of the mirror's
@@ -4493,8 +4497,13 @@ function showOrganiseDialog(plan, seen, trunc) {
 /* Send the moves, then keep the reverse plan.
  *
  * `back` marks the put-back run so it does not record a plan of its own — one
- * level of "put it back" is a safety net, two is a loop. */
-function moveClips(list, back) {
+ * level of "put it back" is a safety net, two is a loop.
+ *
+ * `after` lets a caller write its own closing message while still getting the
+ * put-back plan for free. Revert import needs that: "moved 12 clips" is true and
+ * useless there — what the user needs to be told is that a bin called !Delete me
+ * is now waiting for them in Premiere. */
+function moveClips(list, back, after) {
     if (!list.length) return;
     var lines = [];
     for (var i = 0; i < list.length; i++) lines.push(list[i].id + FIELD_SEP + list[i].to);
@@ -4519,6 +4528,10 @@ function moveClips(list, back) {
         }
         syncOrganiseBack();
 
+        // The plan above is recorded first, so a caller with its own message
+        // still gets ⚙ > Put clips back.
+        if (after) { after(moved, failed); return; }
+
         var msg = (back ? "✓ Put " : "✓ Moved ") + moved + " clip" + (moved === 1 ? "" : "s");
         if (!back && moved) msg += " · ⚙ > Put clips back to undo it";
         setStatus(failed ? (msg + " · couldn’t move " + failed) : (msg + "."),
@@ -4537,6 +4550,399 @@ function syncOrganiseBack() {
 function organisePutBack() {
     if (!organiseBack) return;
     moveClips(organiseBack.items, true);
+}
+
+/* ====================================================================
+ *  REVERT IMPORT — take back what an Import brought in
+ * ====================================================================
+ *
+ * The panel's Undo covers the panel's own structure and nothing else — it says
+ * so itself after every undo — and the host has no delete of any kind: the
+ * aip_* functions can add clips and move them, never remove one. So "undo that
+ * import" cannot mean what it sounds like.
+ *
+ * What it CAN mean, safely: work out which clips that run brought in, move them
+ * into one obvious bin, and let Premiere do the deleting. That keeps the
+ * destructive step where it belongs — with the user, in the app, on a single bin
+ * they can see and check — and costs nothing if they change their mind, because
+ * a move is reversible and ⚙ > Put clips back already reverses it.
+ *
+ * Deleting from here was the other option and I did not take it. ExtendScript
+ * cannot remove a single clip, so the only route is move-to-a-bin-then-
+ * deleteBin(), which deletes the contents — and a clip already cut into a
+ * sequence takes that sequence offline with it. A panel that has never deleted
+ * anything should not learn how on the strength of a filename match.
+ */
+var REVERT_BIN = "!Delete me";        // the ! sorts it to the top of the project
+
+/* Runs worth offering: ones that brought files in AND recorded which.
+ *
+ * Memoised, because this parses the whole log — up to 60 runs of 400 names — and
+ * syncRevertBtn runs on every render. Reading a few hundred KB of JSON to decide
+ * whether one button is greyed out is exactly the kind of cost that does not
+ * show up until the project is big.
+ *
+ * The memo is stamped with the log key it was built from, and that is not
+ * belt-and-braces. refreshProject resets the session BEFORE it assigns
+ * currentProjectKey, so anything that reads the log during the reset reads the
+ * project we are leaving — and at startup, the first render happens before any
+ * project key exists at all, which cached "no runs" under __none__ and left the
+ * button dead for the whole session. Invalidation alone could not fix that
+ * without depending on call order; a key check cannot get it wrong. */
+var revertRuns = null, revertRunsKey = null;
+function revertableRuns() {
+    var k = logKey();
+    if (revertRuns !== null && revertRunsKey === k) return revertRuns;
+    revertRunsKey = k;
+    var log = loadLog();
+    revertRuns = [];
+    for (var i = 0; i < log.length; i++) {
+        var r = log[i], n = 0;
+        if (!r || !r.bins || !r.bins.length) continue;
+        for (var b = 0; b < r.bins.length; b++) n += ((r.bins[b] || {}).files || []).length;
+        if (n > 0) revertRuns.push(r);
+    }
+    return revertRuns;
+}
+function revertInvalidate() { revertRuns = null; }
+function syncRevertBtn() {
+    var el = document.getElementById("tbRevert");
+    if (!el) return;
+    var n = revertableRuns().length;
+    el.disabled = !n;
+    el.classList.toggle("off", !n);
+}
+function revertFileCount(run) {
+    var n = 0;
+    for (var b = 0; b < (run.bins || []).length; b++) n += ((run.bins[b] || {}).files || []).length;
+    return n;
+}
+
+/* The first clip in `pool` that passes `test` and has not been claimed. Claimed
+ * separately so two logged files can never both resolve to the same clip. */
+function revertPick(pool, taken, test) {
+    for (var i = 0; i < pool.length; i++) {
+        if (!taken[pool[i].id] && test(pool[i])) return pool[i];
+    }
+    return null;
+}
+
+/* Which clips currently in the project came from this run.
+ *
+ * Three passes, narrowest first, because the wrong clip moved is worse than a
+ * clip missed. The run records the bin it filled, the folder it read and the
+ * names Premiere reported afterwards; the survey reports every clip's bin, name
+ * and media path.
+ *
+ *   1. same bin, same media path — the strong signal, and the one that survives
+ *      the file being RENAMED in the bin afterwards. That case has bitten this
+ *      project twice, so it is not hypothetical.
+ *   2. same bin, same name — for anything whose media path Premiere does not
+ *      report the way we predicted it (image sequences, and anything it renamed
+ *      on the way in).
+ *   3. that media path anywhere in the project — for a clip that has since been
+ *      moved to another bin, by Organise or by hand. Deliberately timid: it only
+ *      counts when exactly ONE clip in the project has that path. Two copies of
+ *      the same file and it declines to guess rather than move the wrong one.
+ *
+ * Sequences are never matched. A sequence is not something an Import brought in,
+ * and moving one into a bin named !Delete me is the worst possible false
+ * positive here.
+ */
+function revertMatch(run, clips) {
+    var pool = [];
+    for (var i = 0; i < clips.length; i++) if (!clips[i].seq) pool.push(clips[i]);
+
+    var taken = {}, out = [];
+    for (var b = 0; b < (run.bins || []).length; b++) {
+        var rec = run.bins[b] || {};
+        var bin = String(rec.bin || "");
+        var folder = rec.folder ? orgFold(rec.folder) : "";
+        var files = rec.files || [];
+        for (var f = 0; f < files.length; f++) {
+            var name = String(files[f]);
+            var lower = name.toLowerCase();
+            var want = folder ? folder + "/" + lower : "";
+            var hit = null;
+
+            if (want) {
+                hit = revertPick(pool, taken, function (c) {
+                    return c.bin === bin && c.media && orgFold(c.media) === want;
+                });
+            }
+            if (!hit) {
+                hit = revertPick(pool, taken, function (c) {
+                    return c.bin === bin && String(c.name).toLowerCase() === lower;
+                });
+            }
+            if (!hit && want) {
+                var all = [];
+                for (var p = 0; p < pool.length; p++) {
+                    if (pool[p].media && orgFold(pool[p].media) === want) all.push(pool[p]);
+                }
+                if (all.length === 1 && !taken[all[0].id]) hit = all[0];
+            }
+
+            if (hit) {
+                taken[hit.id] = true;
+                out.push({ id: hit.id, name: hit.name, from: hit.bin, to: REVERT_BIN });
+            }
+        }
+    }
+    return out;
+}
+
+function revertImport() {
+    var runs = revertableRuns();
+    if (!runs.length) {
+        setStatus("Nothing to revert — no import in this project has brought files in yet.", "",
+            "The log records a run only when it actually imported something.");
+        return;
+    }
+    setStatus("Looking for what that import brought in…", "");
+    cs.evalScript("aip_surveyClips()", function (res) {
+        var txt = String(res == null ? "" : res);
+        if (txt.indexOf("ERR:") === 0) { setStatus("⚠ " + txt.substring(4), "error"); return; }
+        showRevertDialog(runs, 0, orgParseSurvey(txt), txt.indexOf("TRUNC:") === 0);
+    });
+}
+
+/* One run at a time, newest first, with a step back through the log.
+ *
+ * Stepping re-opens the dialog rather than re-rendering it in place: the whole
+ * state of this thing is (which run, what is ticked), and starting both again
+ * from scratch is less code than keeping them in step — and there is nothing
+ * here worth preserving across a step.
+ */
+function showRevertDialog(runs, idx, clips, trunc) {
+    var run = runs[idx];
+    var logged = revertFileCount(run);
+    var plan = revertMatch(run, clips);
+    var missing = logged - plan.length;
+    var chosen = {};
+    for (var i = 0; i < plan.length; i++) chosen[plan[i].id] = true;
+
+    /* Grouped by the bin each clip is actually in now.
+     *
+     * Two reasons, and the second is the one that matters. Ticking: a revert is
+     * almost always "that one bin was wrong", so the bin is the unit you want to
+     * tick, not the file. Space: the bin was on every single row as "in Audio",
+     * seven times over, and a panel this narrow cannot afford to say the same
+     * thing seven times. Said once as a heading, it costs one row instead of
+     * seven and doubles as the group's tickbox. */
+    var groups = [], groupOf = {};
+    for (var g = 0; g < plan.length; g++) {
+        var key = plan[g].from;
+        if (!groupOf[key]) {
+            groupOf[key] = { bin: key, items: [] };
+            groups.push(groupOf[key]);
+        }
+        groupOf[key].items.push(plan[g]);
+    }
+    /* The filter earns its row at 300 files and wastes it at seven. */
+    var showFilter = plan.length > 12;
+
+    var ov = document.createElement("div");
+    ov.className = "modalOv";
+    var when = fmtWhen(run.at);
+    /* One line. The four-line version pushed the list down to three and a half
+     * visible rows, which made the thing you came here to read the smallest part
+     * of the dialog. What it cut — that nothing is deleted, that the panel cannot
+     * delete, what to do next — is on the button's tooltip and in the message
+     * after the move, both of which are read at the moment they matter. */
+    var h = '<div class="modal adopt pick revert"><div class="modalTitle">Revert import</div>' +
+        '<div class="modalBody">' +
+        (plan.length
+            ? esc(when) + ' · ' + plan.length + ' file' + (plan.length === 1 ? "" : "s") +
+              ' → <b>' + esc(REVERT_BIN) + '</b>, yours to delete in Premiere.' +
+              (missing > 0
+                ? ' <span class="revMiss">' + missing + ' of ' + logged + ' no longer in the project.</span>'
+                : '')
+            : esc(when) + ' brought in ' + logged + ' file' + (logged === 1 ? "" : "s") +
+              ', and none are still in the project.') +
+        (trunc ? ' <span class="revMiss">The project was too big to read all of.</span>' : '') +
+        '</div>';
+    if (runs.length > 1) {
+        h += '<div class="revertRuns">';
+        for (var s = 0; s < runs.length && s < 8; s++) {
+            h += '<button class="revertRun' + (s === idx ? " on" : "") + '" data-idx="' + s + '">' +
+                esc(fmtWhen(runs[s].at)) + ' · ' + revertFileCount(runs[s]) + '</button>';
+        }
+        h += '</div>';
+    }
+    if (plan.length) {
+        if (showFilter) {
+            h += '<div class="adoptFind">' + ICON_SEARCH +
+                '<input class="adoptFindInput" type="text" placeholder="Filter files…" spellcheck="false" ' +
+                'data-tip="Narrow by file name, or by the bin it is in." />' +
+                '<button class="adoptFindClear" style="display:none;" aria-label="Clear the filter">' + ICON_XSMALL + '</button>' +
+            '</div>';
+        }
+        h += '<div class="adoptTools revTools">' +
+                '<span class="adoptCount"></span>' +
+                '<button class="adoptAll" data-tip="Tick every file.">Tick all</button>' +
+                '<button class="adoptNone" data-tip="Tick none of them.">Untick all</button>' +
+            '</div>' +
+            '<div class="adoptList">';
+        for (var gi = 0; gi < groups.length; gi++) {
+            var grp = groups[gi];
+            var binTxt = grp.bin === "" ? "the project root" : grp.bin.split("\t").join(" / ");
+            h += '<div class="revGroup" data-gi="' + gi + '">' +
+                '<label class="revHead">' +
+                '<input type="checkbox" checked class="revHeadBox" data-gi="' + gi + '">' +
+                '<span class="revHeadName">' + esc(binTxt) + '</span>' +
+                '<span class="revHeadN">' + grp.items.length + '</span>' +
+                '</label>';
+            for (var j = 0; j < grp.items.length; j++) {
+                var p = grp.items[j];
+                h += '<div class="adoptRow revRow" data-id="' + esc(p.id) + '" data-gi="' + gi +
+                    '" data-hay="' + esc((p.name + " " + binTxt).toLowerCase()) + '">' +
+                    '<label class="adoptLabel">' +
+                    '<input type="checkbox" checked data-id="' + esc(p.id) + '" data-gi="' + gi + '">' +
+                    '<span class="revName">' + esc(p.name) + '</span>' +
+                    '</label></div>';
+            }
+            h += '</div>';
+        }
+        h += '</div><div class="modalBtns">' +
+            '<button class="mbtn adoptGo revertGo"></button></div>';
+    }
+    h += '<button class="modalCancel">' + (plan.length ? "Cancel" : "Close") + '</button></div>';
+    ov.innerHTML = h;
+    document.body.appendChild(ov);
+
+    function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+    ov.querySelector(".modalCancel").onclick = close;
+
+    var stepBtns = ov.querySelectorAll(".revertRun");
+    for (var sb = 0; sb < stepBtns.length; sb++) {
+        (function (btn) {
+            btn.onclick = function () {
+                var to = parseInt(btn.getAttribute("data-idx"), 10);
+                close();
+                showRevertDialog(runs, to, clips, trunc);
+            };
+        })(stepBtns[sb]);
+    }
+    if (!plan.length) return;
+
+    var boxes = ov.querySelectorAll(".revRow input");
+    var headBoxes = ov.querySelectorAll(".revHeadBox");
+    var rows = ov.querySelectorAll(".revRow");
+    var groupEls = ov.querySelectorAll(".revGroup");
+    var goBtn = ov.querySelector(".revertGo");
+    var countEl = ov.querySelector(".adoptCount");
+    var findInput = ov.querySelector(".adoptFindInput");
+    var findClear = ov.querySelector(".adoptFindClear");
+
+    function ticked() {
+        var out = [];
+        for (var t = 0; t < plan.length; t++) if (chosen[plan[t].id]) out.push(plan[t]);
+        return out;
+    }
+    function shownNow() {
+        var k = 0;
+        for (var r = 0; r < rows.length; r++) if (rows[r].style.display !== "none") k++;
+        return k;
+    }
+    /* A bin's box reflects its files rather than driving them: ticked when all
+     * are, indeterminate when some are. A plain checkbox that reads "on" over a
+     * half-ticked bin is a lie you would then act on. */
+    function syncHeads() {
+        for (var i = 0; i < groups.length; i++) {
+            var on = 0, items = groups[i].items;
+            for (var k = 0; k < items.length; k++) if (chosen[items[k].id]) on++;
+            headBoxes[i].checked = on === items.length;
+            headBoxes[i].indeterminate = on > 0 && on < items.length;
+        }
+    }
+    function sync() {
+        var n = ticked().length;
+        goBtn.textContent = n
+            ? ("Move " + n + " to " + REVERT_BIN)
+            : ("Move to " + REVERT_BIN);
+        goBtn.disabled = !n;
+        goBtn.classList.toggle("off", !n);
+        var term = findInput ? findInput.value.replace(/^\s+|\s+$/g, "") : "";
+        countEl.textContent = n + " of " + plan.length + " ticked" +
+            (term ? " · showing " + shownNow() : "");
+        syncHeads();
+    }
+    for (var bx = 0; bx < boxes.length; bx++) {
+        (function (box) {
+            box.addEventListener("change", function () {
+                chosen[box.getAttribute("data-id")] = box.checked;
+                sync();
+            });
+        })(boxes[bx]);
+    }
+    // The whole bin, not the filtered view of it — same rule as Tick all.
+    for (var hb = 0; hb < headBoxes.length; hb++) {
+        (function (head) {
+            head.addEventListener("change", function () {
+                var items = groups[parseInt(head.getAttribute("data-gi"), 10)].items;
+                for (var i = 0; i < items.length; i++) chosen[items[i].id] = head.checked;
+                for (var b2 = 0; b2 < boxes.length; b2++) {
+                    boxes[b2].checked = !!chosen[boxes[b2].getAttribute("data-id")];
+                }
+                sync();
+            });
+        })(headBoxes[hb]);
+    }
+    function setAll(on) {
+        for (var k2 = 0; k2 < boxes.length; k2++) {
+            boxes[k2].checked = on;
+            chosen[boxes[k2].getAttribute("data-id")] = on;
+        }
+        sync();
+    }
+    ov.querySelector(".adoptAll").onclick = function () { setAll(true); };
+    ov.querySelector(".adoptNone").onclick = function () { setAll(false); };
+
+    function applyFilter() {
+        if (!findInput) { sync(); return; }
+        var term = findInput.value.replace(/^\s+|\s+$/g, "").toLowerCase();
+        findClear.style.display = term ? "flex" : "none";
+        for (var r = 0; r < rows.length; r++) {
+            var hay = rows[r].getAttribute("data-hay") || "";
+            rows[r].style.display = (!term || hay.indexOf(term) >= 0) ? "" : "none";
+        }
+        // A bin heading with nothing under it is a heading for nothing.
+        for (var gg = 0; gg < groupEls.length; gg++) {
+            var kids = groupEls[gg].querySelectorAll(".revRow"), any = false;
+            for (var kk = 0; kk < kids.length; kk++) {
+                if (kids[kk].style.display !== "none") { any = true; break; }
+            }
+            groupEls[gg].style.display = any ? "" : "none";
+        }
+        sync();
+    }
+    if (findInput) {
+        findInput.addEventListener("input", applyFilter);
+        findInput.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); findInput.value = ""; applyFilter(); }
+        });
+        findClear.onclick = function () { findInput.value = ""; applyFilter(); findInput.focus(); };
+    }
+
+    goBtn.onclick = function () {
+        if (goBtn.disabled) return;
+        var go = ticked();
+        close();
+        /* Its own closing message: "moved 12 clips" is true and useless here.
+         * What matters is that a bin is now sitting in Premiere waiting to be
+         * deleted, and that this is still reversible if they got it wrong. */
+        moveClips(go, false, function (moved, failed) {
+            var msg = "✓ Moved " + moved + " file" + (moved === 1 ? "" : "s") + " into “" + REVERT_BIN + "”";
+            setStatus(failed ? (msg + " · couldn’t move " + failed) : (msg + "."),
+                failed ? "error" : "ok",
+                "Delete it in Premiere: right-click “" + REVERT_BIN + "” in the Project panel and choose Clear. " +
+                "Check the bin before you do — if any of these are already cut into a sequence, " +
+                "deleting them takes that footage offline. " +
+                "Changed your mind? ⚙ &gt; Put clips back returns every one of them to the bin it came from.");
+        });
+    };
+    sync();
 }
 
 /* ====================================================================
@@ -4974,6 +5380,15 @@ function resetSessionState() {
     clearFresh();
     adoptScanKey = null;
     logFilterBin = null;
+    /* The log is keyed per project, so the memoised run list describes the one we
+     * just left. Left stale, Revert import would offer another project's files
+     * and then resolve them by nodeId against THIS project — the same shape as
+     * the undo-across-projects bug, with the same consequence.
+     *
+     * No syncRevertBtn() here: currentProjectKey is still the OLD project at this
+     * point, so the button would be painted from the wrong log for an instant.
+     * The renderAll() that follows the reassignment paints it correctly. */
+    revertInvalidate();
     setSearchTerm("");
     var inp = document.getElementById("searchInput");
     if (inp) inp.value = "";
@@ -6070,7 +6485,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     document.getElementById("giReset").onclick = function () { closeGear(); resetStructure(); };
     // the toolbar
-    document.getElementById("tbAddTop").onclick = addTopBin;
+    document.getElementById("tbRevert").onclick = revertImport;
     document.getElementById("tbRead").onclick = readProjectBins;
     document.getElementById("tbReload").onclick = function () {
         refreshProject(true); setStatus("Reloaded for this project.", "");

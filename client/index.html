@@ -80,9 +80,9 @@
                      click and a hunt away. Icon + label: at this width icons
                      alone would be four guesses in a row. -->
                 <div class="toolbar">
-                    <button id="tbAddTop" class="tbBtn" data-tip="Add an empty bin at the top level.<i>Or drag a folder onto the list below to make one that is already linked.</i>">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-                        <span>Add bin</span>
+                    <button id="tbRevert" class="tbBtn off" disabled data-tip="<b>Revert import</b>Shows you exactly what the last Import brought in, then moves those clips into a bin called “!Delete me” so you can delete them in one go.<i>Nothing is deleted — the panel has no way to delete anything. It moves them somewhere obvious and leaves the deleting to you.</i>">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h16v3.2H4z" /><path d="M5.6 11.2V19a1 1 0 0 0 1 1h10.8a1 1 0 0 0 1-1v-7.8" /><path d="M12 17v-4.4" /><path d="M9.9 14.7 12 12.6l2.1 2.1" /></svg>
+                        <span>Revert</span>
                     </button>
                     <button id="tbRead" class="tbBtn" data-tip="Scan the open Premiere project and rebuild this structure from the bins actually in it.">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M8 13h8" /><path d="M12 9v8" /></svg>
@@ -187,11 +187,13 @@
                 <div class="dzSub">One bin per folder, linked and ready to import</div>
             </div>
 
-            <!-- The toolbar's "Add bin" is the one; a full-width twin at the end
-                 of the list was the same action in a second place. Dropping a
-                 folder on the list is still how a LINKED bin gets made, and the
-                 empty-state zone above covers the case where there is no list
-                 to drop onto yet. -->
+            <!-- There is no "Add bin" button here any more, in the toolbar or as
+                 a full-width twin at the end of the list. Bom's actual workflow
+                 is dropping folders, which makes a bin that is already LINKED —
+                 an empty unlinked bin was the rarer half of the button doing the
+                 more common thing's job. The routes that remain: drop a folder
+                 on the list, drop one on the empty-state zone above, right-click
+                 a bin for a sub-bin, or Read to rebuild from the project. -->
             </div><!-- /structWrap -->
 
             <!-- A bin's contents. Premiere exposes no way to open or scroll to a

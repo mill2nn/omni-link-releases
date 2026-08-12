@@ -656,6 +656,57 @@ body.depthCues .trow[data-depth="6"]::after {
 .adoptFoldAll { margin-left: auto; }
 .adoptFoldAll.allFolded { color: var(--accent); border-color: rgba(45, 140, 235, 0.45); }
 /* Inert while a filter is on: matching bins are already shown. */
+/* --- Revert import: grouped by bin, one line per file ---
+   The first build put the bin under every filename and wrapped four lines of
+   explanation above the list, which left three and a half rows of the thing you
+   opened the dialog to read. The bin is now a heading that says it once and
+   doubles as the group's tickbox, and a file row is a single line. */
+.modal.adopt.revert .modalBody { font-size: 10.5px; line-height: 1.45; }
+.revMiss { color: var(--text-3); }
+/* The count sits beside the buttons instead of claiming a row of its own. */
+.revTools .adoptCount { flex: 1 1 auto; min-width: 0; }
+.revGroup + .revGroup { margin-top: 2px; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.revHead {
+    display: flex; align-items: center; gap: 7px;
+    padding: 5px 5px 4px; border-radius: 6px; cursor: pointer;
+}
+.revHead:hover { background: rgba(255, 255, 255, 0.04); }
+.revHeadName {
+    flex: 1 1 auto; min-width: 0; font-size: 11px; font-weight: 600; color: #f0f0f4;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.revHeadN {
+    flex: none; padding: 0 5px; border-radius: 8px;
+    background: rgba(255, 255, 255, 0.07); color: var(--text-3);
+    font-size: 9.5px; font-weight: 600; line-height: 15px;
+}
+/* Indented under its heading, and single-line: the bin is said once above. */
+.revRow { padding: 3px 5px 3px 20px; }
+.revRow .revName {
+    flex: 1 1 auto; min-width: 0; font-size: 10.5px; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* --- Revert import: which run to take back ---
+   Only drawn when there is more than one, so a project with a single import
+   never shows a chooser with one option in it. Wraps rather than scrolls: the
+   panel is narrow and a horizontal scroller here would hide the older runs
+   behind a gesture nobody would think to try. */
+.revertRuns { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 9px; }
+.revertRun {
+    flex: none; padding: 3px 8px; border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.10);
+    color: var(--text-3); font-family: inherit; font-size: 10px; transition: 0.12s;
+}
+.revertRun:hover { color: #f0f0f4; background: rgba(255, 255, 255, 0.09); border-color: rgba(255, 255, 255, 0.18); }
+.revertRun.on {
+    color: #f0f0f4; background: rgba(45, 140, 235, 0.16);
+    border-color: rgba(45, 140, 235, 0.45);
+}
+/* The confirm button names the destination bin, so it is wider than "Move" and
+   must not push the row out of the panel. */
+.revertGo { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .adoptTools button.off { opacity: 0.4; cursor: default; }
 .adoptTools button.off:hover { color: var(--text-2); background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.10); }
 
