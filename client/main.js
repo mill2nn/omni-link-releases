@@ -22,7 +22,7 @@ var cs = new CSInterface();
 // Bump this AND ExtensionBundleVersion in CSXS/manifest.xml together — the
 // shareable-zip script fails the build if the two ever disagree, because
 // "which version are you on?" has to have one answer.
-var VERSION = "1.3.16";
+var VERSION = "1.3.17";
 
 /*
  * What Import picks up. A format missing from here is skipped in silence — the
@@ -504,31 +504,45 @@ function setSkip(node, off) {
         }
     })(node);
 }
-/* on / off / mixed, for what the control should draw. */
+/* A bin created under a switched-off parent starts switched off too.
+ *
+ * This is where the old ancestor veto has moved, and the right place for it: once,
+ * at creation, instead of a rule that re-decided the question on every import and
+ * overrode what the user had explicitly set on the child. */
+function inheritSkip(parent, kid) {
+    if (parent && parent.skip) kid.skip = true;
+    return kid;
+}
+/* on / off / mixed, for what the control should draw — counting the node ITSELF
+ * as well as its branch.
+ *
+ * This used to answer "off" the instant node.skip was set, without looking down.
+ * So Bom's Footage — switched off, with BEVA Animation switched back on beneath
+ * it — drew as fully off, while BEVA drew as fully on and did not import. Both
+ * controls were lying, in opposite directions, and neither said why. */
 function skipState(node) {
-    if (node.skip) return "off";
     var on = 0, off = 0;
     (function rec(n) {
+        if (n.skip) off++; else on++;
         var kids = n.children || [];
-        for (var i = 0; i < kids.length; i++) {
-            if (kids[i].skip) off++; else on++;
-            rec(kids[i]);
-        }
+        for (var i = 0; i < kids.length; i++) rec(kids[i]);
     })(node);
     return off ? (on ? "mixed" : "off") : "on";
 }
-/* Skipped by itself OR by anything above it. The cascade keeps these in step,
- * but a bin mirrored in later under a switched-off parent would arrive without
- * the flag, and importing into it would be exactly what was asked not to happen. */
+/* Skipped by its OWN switch. Nothing else.
+ *
+ * This used to be "skipped by itself or by anything above it", which quietly
+ * vetoed a sub-bin the user had deliberately switched on under a parent they had
+ * switched off — the row said on, the import ignored it, and nothing explained
+ * the difference. Switching a bin on is a statement about that bin.
+ *
+ * The veto did guard something real: a sub-bin mirrored in from disk under a
+ * switched-off parent arrives with no flag of its own, and importing into it is
+ * exactly what was asked not to happen. inheritSkip() handles that at creation,
+ * which fixes it without overruling anything the user chose. */
 function skippedNodes() {
     var out = new Map();
-    (function walk(arr, under) {
-        for (var i = 0; i < arr.length; i++) {
-            var n = arr[i], off = under || !!n.skip;
-            if (off) out.set(n, true);
-            if (n.children && n.children.length) walk(n.children, off);
-        }
-    })(treeData || [], false);
+    forEachNode(function (n) { if (n.skip) out.set(n, true); });
     return out;
 }
 /* The same three states, for the whole tree. */
@@ -3102,7 +3116,8 @@ function setColor(node, color) {
 function addChild(node) {
     pushUndo("add a sub-bin");
     if (!node.children) node.children = [];
-    node.children.push({ name: "New bin", folder: "", color: "", pinned: false, children: [] });
+    node.children.push(inheritSkip(node,
+        { name: "New bin", folder: "", color: "", pinned: false, children: [] }));
     node.open = true;                 // unfold so the new sub-bin is visible
     expandTree(); saveTree(); renderAll();
 }
@@ -3468,10 +3483,15 @@ function mirrorSubfolders() {
      */
     function mirrorInto(node, chainDepth, guard) {
         if (added >= MIRROR_MAX_NEW || guard > 40) return;
-        // "Leave this branch alone" has to mean the whole branch, or a new
-        // subfolder would quietly appear under a bin that was switched off.
-        if (node.skip) return;
-        if (node.folder && chainDepth <= MIRROR_MAX_DEPTH) {
+        /* A switched-off bin does not get new sub-bins mirrored INTO it — a
+         * folder appearing on disk must not reopen a bin that was switched off.
+         *
+         * But it is no longer a dead end. This used to `return` here, which meant
+         * a sub-bin switched deliberately back ON under a switched-off parent
+         * never got its own subfolders either: the same ancestor-overrules-child
+         * bug as the one in skippedNodes, one level down. Each bin's own switch
+         * decides for that bin, so the walk carries on to the children below. */
+        if (!node.skip && node.folder && chainDepth <= MIRROR_MAX_DEPTH) {
             var subs = subfoldersOf(node.folder);
             if (!node.children) node.children = [];
             for (var i = 0; i < subs.length && added < MIRROR_MAX_NEW; i++) {
@@ -3482,6 +3502,12 @@ function mirrorSubfolders() {
                     }
                 }
                 if (!have) {
+                    /* No inheritSkip here on purpose. The `!node.skip` guard above
+                     * is what stops a folder on disk reopening a switched-off bin,
+                     * and it is stronger — nothing is created at all rather than
+                     * created switched off. An inheritSkip call here would look
+                     * like a second protection while being unable to fire, which
+                     * a planted mutation proved: removing it broke no test. */
                     have = { name: subs[i].name, folder: subs[i].path, color: "", pinned: false, children: [] };
                     node.children.push(have);
                     added++;
@@ -6089,14 +6115,15 @@ function showAdoptDialog(recs, trunc, opts) {
 function adoptPaths(paths, mode) {
     var incoming = treeFromPaths(paths), added = 0, linked = 0, unlinked = [];
 
-    (function merge(src, destArr) {
+    (function merge(src, destArr, parent) {
         for (var i = 0; i < src.length; i++) {
             var match = null;
             for (var j = 0; j < destArr.length; j++) {
                 if (String(destArr[j].name).toLowerCase() === String(src[i].name).toLowerCase()) { match = destArr[j]; break; }
             }
             if (!match) {
-                match = { name: src[i].name, folder: "", color: "", pinned: false, open: true, children: [] };
+                match = inheritSkip(parent,
+                    { name: src[i].name, folder: "", color: "", pinned: false, open: true, children: [] });
                 destArr.push(match);
                 added++;
                 if (src[i].folder) { match.folder = src[i].folder; linked++; }
@@ -6108,7 +6135,7 @@ function adoptPaths(paths, mode) {
                 linked++;
             }
             if (!match.children) match.children = [];
-            merge(src[i].children, match.children);
+            merge(src[i].children, match.children, match);
         }
     })(incoming, treeData);
 
