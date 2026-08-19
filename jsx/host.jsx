@@ -906,7 +906,76 @@ function aip_binContents(binPath) {
             meta = aip_extOf(name);
         }
         var off = (kind === "B") ? "" : aip_isOffline(item);
-        out.push(kind + AIP_FIELD_SEP + i + AIP_FIELD_SEP + name + AIP_FIELD_SEP + meta + AIP_FIELD_SEP + off);
+        /* The source in and out points, in seconds.
+         *
+         * A clip nobody has trimmed still answers: in is 0 and out is its whole
+         * length, which is the clip's duration and worth showing on its own. Sent
+         * as raw seconds because formatting mm:ss in ES3 is more string work than
+         * it is worth, and the panel has to decide what to draw anyway.
+         *
+         * Every accessor here is behind a typeof test and a try. A still, a
+         * synthetic, an offline clip and a bin all answer differently or not at
+         * all, and one throwing must not cost the whole listing. */
+        /* In, out, duration — AND a note saying where each number came from.
+         *
+         * I have now guessed at this API twice and been wrong twice. ProjectItem's
+         * time accessors are not documented consistently across Premiere versions:
+         * getInPoint/getOutPoint take an optional mediaType and may answer
+         * differently with none, and getDuration may not exist on a ProjectItem at
+         * all — in which case my last "fix" did nothing, because it was behind a
+         * typeof test that silently failed.
+         *
+         * So this stops guessing and reports. Each value carries a one-letter tag
+         * saying which accessor produced it, and the panel puts the lot in the
+         * tooltip. One hover tells us what Premiere really said.
+         */
+        var tin = "", tout = "", tdur = "", dbg = "";
+        if (kind === "C") {
+            // in / out, no mediaType — what the panel has been using.
+            try {
+                if (typeof item.getInPoint === "function") {
+                    var ip = item.getInPoint();
+                    if (ip && typeof ip.seconds !== "undefined") { tin = String(ip.seconds); dbg += "i"; }
+                    else if (ip && typeof ip.ticks !== "undefined") { tin = String(Number(ip.ticks) / 254016000000); dbg += "I"; }
+                } else { dbg += "-"; }
+            } catch (eI) { dbg += "x"; }
+            try {
+                if (typeof item.getOutPoint === "function") {
+                    var op = item.getOutPoint();
+                    if (op && typeof op.seconds !== "undefined") { tout = String(op.seconds); dbg += "o"; }
+                    else if (op && typeof op.ticks !== "undefined") { tout = String(Number(op.ticks) / 254016000000); dbg += "O"; }
+                } else { dbg += "-"; }
+            } catch (eO) { dbg += "x"; }
+            /* Duration, three ways. getDuration first, then the projectItem's own
+             * duration property, then the video stream's out point — whichever
+             * answers first wins and the tag says which. */
+            try {
+                if (typeof item.getDuration === "function") {
+                    var dr = item.getDuration();
+                    if (dr && typeof dr.seconds !== "undefined") { tdur = String(dr.seconds); dbg += "d"; }
+                    else if (dr && typeof dr.ticks !== "undefined") { tdur = String(Number(dr.ticks) / 254016000000); dbg += "D"; }
+                }
+            } catch (eD) { dbg += "x"; }
+            if (tdur === "") {
+                try {
+                    if (item.duration && typeof item.duration.seconds !== "undefined") {
+                        tdur = String(item.duration.seconds); dbg += "p";
+                    }
+                } catch (eP) { dbg += "x"; }
+            }
+            if (tdur === "") {
+                try {
+                    if (typeof item.getOutPoint === "function") {
+                        var ov = item.getOutPoint(1);          // 1 = video stream
+                        if (ov && typeof ov.seconds !== "undefined") { tdur = String(ov.seconds); dbg += "v"; }
+                    }
+                } catch (eV) { dbg += "x"; }
+            }
+            if (tdur === "") dbg += "?";
+        }
+        out.push(kind + AIP_FIELD_SEP + i + AIP_FIELD_SEP + name + AIP_FIELD_SEP + meta +
+                 AIP_FIELD_SEP + off + AIP_FIELD_SEP + tin + AIP_FIELD_SEP + tout +
+                 AIP_FIELD_SEP + tdur + AIP_FIELD_SEP + dbg);
     }
     if (out.length === 0) return "OK:";
     return (hit ? "TRUNC:" : "OK:") + out.join("\n");
@@ -948,7 +1017,35 @@ function aip_childOf(binPath, index, expectName) {
  *
  * Returns "OK:<track>", or STALE / ISBIN / NOSEQ / NOTRACK / ERR:...
  */
-function aip_insertToTimeline(binPath, index, expectName, isAudio) {
+/* What the open sequence has to offer, so the panel can draw a track picker
+ * without guessing. One call, not one per track.
+ *
+ * Returns  videoCount | audioCount | sequenceName  — or NOSEQ.
+ */
+function aip_seqTracks() {
+    if (!app.project) return "ERR:No project open";
+    var seq = null;
+    try { seq = app.project.activeSequence; } catch (e) { seq = null; }
+    if (!seq) return "NOSEQ";
+    var v = 0, a = 0, nm = "";
+    try { v = seq.videoTracks.numTracks; } catch (e1) { v = 0; }
+    try { a = seq.audioTracks.numTracks; } catch (e2) { a = 0; }
+    try { nm = String(seq.name); } catch (e3) { nm = ""; }
+    return "OK:" + v + AIP_FIELD_SEP + a + AIP_FIELD_SEP + nm;
+}
+
+/* Put a clip on the timeline at the playhead.
+ *
+ * trackIdx is ZERO-BASED, the way videoTracks[] is indexed, while the panel shows
+ * it one-based as V1/A1 — the conversion happens there so this stays the same
+ * shape as the API it calls.
+ *
+ * mode is "over" for overwriteClip, anything else for insertClip. Insert ripples
+ * everything to the right to make room; overwrite replaces whatever is under the
+ * playhead and is the destructive one, which is why the panel keeps it behind a
+ * modifier rather than making it the default.
+ */
+function aip_insertToTimeline(binPath, index, expectName, isAudio, trackIdx, mode) {
     var item = aip_childOf(binPath, index, expectName);
     if (item === null) return "STALE";
     if (item.type == 2) return "ISBIN";
@@ -962,19 +1059,27 @@ function aip_insertToTimeline(binPath, index, expectName, isAudio) {
     if (at === null) return "ERR:could not read the playhead";
 
     var wantAudio = (String(isAudio) === "1");
-    var tracks = null, label = "";
-    try {
-        tracks = wantAudio ? seq.audioTracks : seq.videoTracks;
-        label = wantAudio ? "A1" : "V1";
-    } catch (e2) { tracks = null; }
+    var tracks = null, kind = wantAudio ? "A" : "V";
+    try { tracks = wantAudio ? seq.audioTracks : seq.videoTracks; }
+    catch (e2) { tracks = null; }
     if (!tracks || tracks.numTracks < 1) return "NOTRACK";
 
+    /* Clamp rather than fail. The panel remembers a chosen track per project, and
+     * the sequence you open next may have fewer — silently using the last one is
+     * better than refusing, and the reply says which it used either way. */
+    var idx = parseInt(trackIdx, 10);
+    if (isNaN(idx) || idx < 0) idx = 0;
+    if (idx > tracks.numTracks - 1) idx = tracks.numTracks - 1;
+
+    var over = (String(mode) === "over");
     try {
-        tracks[0].insertClip(item, at);
+        if (over) tracks[idx].overwriteClip(item, at);
+        else tracks[idx].insertClip(item, at);
     } catch (e3) {
         return "ERR:" + e3.toString();
     }
-    return "OK:" + label;
+    // The panel reports what actually happened, not what was asked for.
+    return "OK:" + kind + (idx + 1) + AIP_FIELD_SEP + (over ? "over" : "insert");
 }
 
 function aip_selectChild(binPath, index, expectName) {

@@ -22,7 +22,7 @@ var cs = new CSInterface();
 // Bump this AND ExtensionBundleVersion in CSXS/manifest.xml together — the
 // shareable-zip script fails the build if the two ever disagree, because
 // "which version are you on?" has to have one answer.
-var VERSION = "1.3.17";
+var VERSION = "1.4.0";
 
 /*
  * What Import picks up. A format missing from here is skipped in silence — the
@@ -432,14 +432,24 @@ function toggleCollapsed() { localStorage.setItem(COLLAPSE_KEY, isCollapsed() ? 
 var MIN_TILE = 78;
 var GRID_GAP = 8;
 
-// Pure on purpose: `collapsed` is passed in rather than read from storage, so
-// the sizing rule can be reasoned about and tested on its own.
-function pinColsFor(count, gridWidth, collapsed) {
+/* How many columns the pinned tiles wrap at.
+ *
+ * Pure on purpose, so the rule can be reasoned about and tested on its own.
+ *
+ * It used to take a `collapsed` flag and do `want--` when the BINS section was
+ * folded, under a comment claiming that went one column WIDER. It went narrower:
+ * four pins dropped from 2x2 to a single column of four full-width tiles, which is
+ * the "takes too much vertical space" Bom reported — with BINS folded, which is
+ * exactly when the tiles are the only thing on screen and least need to be huge.
+ *
+ * The flag is gone rather than corrected. How many columns to draw is a question
+ * about the pin count and the panel's width; a layout that reshuffles because an
+ * unrelated section was folded is surprising however the arithmetic goes.
+ */
+function pinColsFor(count, gridWidth) {
     if (count <= 1) return 1;
-    // never strand a single tile alone on the last row: 4 reads better as 2x2
+    // Never strand one tile alone on the last row: 4 reads better as 2x2 than 3+1.
     var want = (count === 2) ? 2 : (count === 4 ? 2 : 3);
-    // with the tree collapsed there is room to spare, so go one column wider
-    if (collapsed && want > 1) want--;
     if (gridWidth > 0) {
         while (want > 1 && (gridWidth - GRID_GAP * (want - 1)) / want < MIN_TILE) want--;
     }
@@ -462,7 +472,7 @@ function refitPinnedColumns() {
     if (!grid || !treeData) return;
     var n = 0;
     forEachNode(function (x) { if (x.pinned) n++; });
-    setTileBasis(grid, pinColsFor(n, grid.clientWidth || 0, isCollapsed()));
+    setTileBasis(grid, pinColsFor(n, grid.clientWidth || 0));
 }
 
 // Premiere resizes the panel's host window, and whether that surfaces as a
@@ -592,6 +602,7 @@ function toggleSkip(node) {
     pushUndo((off ? "switching off " : "switching on ") + "“" + node.name + "”");
     setSkip(node, off);
     saveTree();
+    refreshPending();
     renderAll();
     var n = 0;
     skippedNodes().forEach(function () { n++; });
@@ -623,8 +634,7 @@ function setDepthCues(on) {
 }
 function applyDepthCues() {
     document.body.classList.toggle("depthCues", depthCuesOn());
-    var el = document.getElementById("giDepthLabel");
-    if (el) el.textContent = depthCuesOn() ? "Bin levels: clearer" : "Bin levels: flat";
+    setGearSwitch("giDepthSw", depthCuesOn());
 }
 // The indent is a number, not a style, so it cannot live in the stylesheet.
 var INDENT_CUED = 22;
@@ -701,14 +711,36 @@ function renderAll() {
     applyCollapsed();
     applyDepthCues();
     syncSkipAll();
+    syncImportBtn();
     syncUndoBtn();
     syncRevertBtn();
     syncOrganiseBack();
     syncAutoImportLabel();
     syncContentsView();
-    var total = 0;
-    forEachNode(function () { total++; });
+    var total = 0, offCount = 0, off = skippedNodes();
+    forEachNode(function (nd) { total++; if (off.has(nd)) offCount++; });
     syncSearchCount(flatRows.length, total);
+    /* The shape of the project without reading a row. The total was already being
+     * counted here for the search's "2 of 6" and thrown away otherwise. */
+    /* The BINS row and the search stick below the top block.
+     *
+     * Only .header was sticky, so on a 370-bin project you scrolled to the bottom,
+     * wanted to filter, and had to scroll all the way back up. The offset cannot
+     * be a constant: the top block grows and shrinks as the Undo and Revert chips
+     * come and go, so it is measured here and written as a custom property. */
+    var hdr = document.querySelector("#mainView .header");
+    var sw = document.getElementById("structWrap");
+    if (hdr && sw) {
+        var hh = hdr.offsetHeight;
+        if (hh) sw.style.setProperty("--stickTop", hh + "px");
+    }
+
+    var tally = document.getElementById("binTally");
+    if (tally) {
+        tally.textContent = total
+            ? (total + (offCount ? " · " + offCount + " off" : ""))
+            : "";
+    }
 
     if (se && keep > 0 && se.scrollTop === 0) {
         se.scrollTop = keep;
@@ -749,10 +781,9 @@ function setTileClickMode(mode) {
  * does now — a menu item that describes the current state reads as a status
  * line and gets clicked by accident. */
 function syncTileModeLabel() {
-    var el = document.getElementById("giTileModeLabel");
-    if (el) el.textContent = tileClickMode() === "contents"
-        ? "Pinned click: highlight instead"
-        : "Pinned click: show contents";
+    /* The switch reads "does a click highlight the bin in Premiere", which is
+     * the default. Off means the click shows the bin's contents in the panel. */
+    setGearSwitch("giTileModeSw", tileClickMode() !== "contents");
 }
 
 function syncContentsView() {
@@ -785,9 +816,75 @@ function parseContents(body) {
         if (lines[i] === "") continue;
         var f = lines[i].split(FIELD_SEP);
         if (f.length < 5) continue;
-        out.push({ kind: f[0], idx: f[1], name: f[2], meta: f[3], off: f[4] === "1" });
+        /* Fields 6 and 7 are the source in and out in seconds. An older host sends
+         * five fields, so these are simply absent: parseFloat(undefined) is NaN, and
+         * clipRange treats NaN as "nothing to say". A length check here read as
+         * careful and was untestable — removing it broke no assertion, because
+         * isFinite downstream was already doing the work. */
+        out.push({
+            kind: f[0], idx: f[1], name: f[2], meta: f[3], off: f[4] === "1",
+            tin: parseFloat(f[5]), tout: parseFloat(f[6]), tdur: parseFloat(f[7]),
+            // Which accessor produced each number. Reported, not interpreted — see
+            // the tooltip. Two wrong guesses at this API is two too many.
+            dbg: f.length > 8 ? f[8] : ""
+        });
     }
     return out;
+}
+
+/* mm:ss, rolling to h:mm:ss past an hour rather than printing 83:20.
+ *
+ * Rounded, not truncated: a 4.6-second clip reading 00:04 while Premiere calls it
+ * 00:05 is the sort of small disagreement that makes you doubt the panel. */
+function fmtClock(sec) {
+    if (!isFinite(sec) || sec < 0) return "";
+    var t = Math.round(sec);
+    var h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), ss = t % 60;
+    function two(n) { return n < 10 ? "0" + n : String(n); }
+    return h ? (h + ":" + two(m) + ":" + two(ss)) : (two(m) + ":" + two(ss));
+}
+/* The range for one row, or "" when there is nothing worth saying.
+ *
+ * A still has no meaningful in and out, and an offline clip cannot be asked — both
+ * come back as a zero-length range, and drawing "00:00-00:00" on those would be
+ * noise that looks like data. */
+/* Trimmed, or just long?
+ *
+ * An untrimmed clip answers in=0 and out=duration, so the first version of this
+ * drew "00:00-00:07" on clips Bom had never touched — a range that looked like an
+ * edit he had made. A range is only news when the clip really is trimmed; the rest
+ * of the time its LENGTH is the useful number, and it should say so plainly.
+ *
+ * A frame of slack on each end, because a clip trimmed by nothing can still come
+ * back a frame short of its own duration and that is not a trim anyone made.
+ */
+var TRIM_SLACK = 0.05;             // ~1 frame at 24fps, and under one at 60
+function clipTrimmed(r) {
+    if (!isFinite(r.tin) || !isFinite(r.tout) || r.tout <= r.tin) return false;
+    /* No duration to compare against.
+     *
+     * This used to `return true` here — treat it as trimmed — and that made the
+     * whole trimmed-vs-whole fix a NO-OP on any Premiere where the duration
+     * accessors do not answer: it drew "00:00-00:07" again, which is the exact
+     * display Bom reported as wrong. Twice.
+     *
+     * Without a duration, the only evidence of a trim is the IN point. An in of 0
+     * means nothing was taken off the front, so out is simply how long the clip is.
+     * Only a non-zero in proves someone trimmed it. */
+    if (!isFinite(r.tdur) || r.tdur <= 0) return r.tin > TRIM_SLACK;
+    return r.tin > TRIM_SLACK || r.tout < r.tdur - TRIM_SLACK;
+}
+function clipRange(r) {
+    /* One condition covers every "nothing to say" case, and separate guards for
+     * each looked thorough while being untestable — a planted removal of the bin
+     * check and of a field-length check broke nothing, because a bin is sent WITHOUT
+     * these fields and a missing field is already NaN. */
+    if (!isFinite(r.tin) || !isFinite(r.tout) || r.tout <= r.tin) {
+        // No in/out, but a duration is still worth showing.
+        return (isFinite(r.tdur) && r.tdur > 0) ? fmtClock(r.tdur) : "";
+    }
+    if (clipTrimmed(r)) return fmtClock(r.tin) + "-" + fmtClock(r.tout);
+    return fmtClock(r.tout - r.tin);
 }
 
 var C_ICONS = {
@@ -896,6 +993,9 @@ function syncRev(btn, key) {
     if (!btn) return;
     var desc = sortDir(key) === "desc";
     btn.classList.toggle("desc", desc);
+    // As a menu row it carries the same tick as the sort options around it, so
+    // "reversed or not" is answered the same way "which order" is.
+    if (btn.classList.contains("gearItem")) btn.classList.toggle("on", desc);
     btn.setAttribute("data-tip", desc
         ? "Currently reversed. Click for normal order.<i>Applies to whichever order is chosen, not just A–Z.</i>"
         : "Reverse the order.<i>Applies to whichever order is chosen, not just A–Z.</i>");
@@ -906,7 +1006,14 @@ function syncTreeSortControl() {
     if (!wrap) return;
     var mode = treeSort();
     var now = wrap.querySelector(".tSortNow");
-    if (now) now.textContent = TREE_SORT_LABELS[mode] || TREE_SORT_LABELS.manual;
+    var label = TREE_SORT_LABELS[mode] || TREE_SORT_LABELS.manual;
+    if (now) now.textContent = label;
+    /* The button is an icon now, so the mode has to be said somewhere a mouse can
+     * reach: its tooltip. It was a wide text pill among three 24px squares, and
+     * the widest thing on a row that could not fit its own title. */
+    var btn = wrap.querySelector(".tSort");
+    if (btn) btn.setAttribute("data-tip", "<b>Order: " + esc(label) + "</b>" +
+        "Display only — your saved order is untouched, and reordering by hand needs Manual.");
     var opts = wrap.querySelectorAll(".tSortOpt");
     for (var i = 0; i < opts.length; i++) {
         opts[i].classList.toggle("on", opts[i].getAttribute("data-sort") === mode);
@@ -992,6 +1099,12 @@ function openContents(path, root, reveal) {
     syncContentsView();
     var cv = document.getElementById("contentsView");
     if (!cv) return;
+
+    /* The track pickers are only meaningful with a sequence open, and which
+     * sequence that is can change while the panel sits there — so this asks each
+     * time the list is opened rather than once at startup. */
+    wireTrackPickers();
+    refreshSeqTracks();
 
     var node = nodeAtBinPath(contentsPath);
     var name = contentsPath[contentsPath.length - 1] || "";
@@ -1089,11 +1202,31 @@ function paintContents() {
             '<span class="cIco">' + contentsIcon(r) + '</span>' +
             '<span class="cItem">' + esc(r.name) + '</span>' +
             (r.kind === "B" ? ""
-                : '<span class="cIns" data-tip="Drop this clip into the open sequence at the playhead, on ' +
-                  (contentsType(r) === "Audio" ? "A1" : "V1") +
-                  '.<i>Clips already there ripple right — nothing is overwritten.</i>">' + C_ICONS.plus + '</span>' +
+                : '<span class="cIns" data-tip="<b>Add to ' + trackLabel(contentsType(r) === "Audio") +
+                  ' at the playhead</b>Clips to the right ripple along to make room.' +
+                  '<i>⌥-click to overwrite what is there instead.</i>">' + C_ICONS.plus + '</span>' +
                   '<span class="cPlay" data-tip="Preview it in the Source Monitor, without touching the timeline.">' +
                   C_ICONS.play + '</span>') +
+            (function () {
+                var rng = clipRange(r);
+                if (!rng) return '';
+                var trimmed = clipTrimmed(r);
+                /* The raw seconds are in the tooltip on purpose. getInPoint and
+                 * getOutPoint take an optional mediaType and this passes none, which
+                 * is the part I am least sure of — if these numbers ever disagree
+                 * with Premiere, this is where you can see it rather than us
+                 * arguing about which is right. */
+                var raw = "<i>Premiere said: in " + (isFinite(r.tin) ? r.tin.toFixed(2) : "?") +
+                          "s · out " + (isFinite(r.tout) ? r.tout.toFixed(2) : "?") +
+                          "s · duration " + (isFinite(r.tdur) ? r.tdur.toFixed(2) : "?") + "s" +
+                          (r.dbg ? "  [" + esc(r.dbg) + "]" : "") + "</i>";
+                return '<span class="cRange' + (trimmed ? " trimmed" : "") +
+                    '" data-tip="<b>' + (trimmed ? "Trimmed: " + esc(rng) : "Whole clip, " + esc(rng) + " long") +
+                    '</b>' + (trimmed
+                        ? "What the + and ▶ use. Set it in the Source Monitor."
+                        : "No in or out set, so + and ▶ take all of it.") +
+                    raw + '">' + esc(rng) + '</span>';
+            })() +
             '<span class="cMeta">' + esc(meta) + '</span></div>';
     }
     list.innerHTML = html;
@@ -1130,16 +1263,151 @@ function contentsClick(hit) {
 
 /* Send a clip to the timeline. The Project panel cannot be driven from here, so
  * the useful answer is to make going there unnecessary. */
-function insertToTimeline(hit) {
+/* ====================================================================
+ *  WHICH TRACK the + drops onto
+ * ====================================================================
+ *
+ * It was hardcoded to tracks[0] — V1 for a video clip, A1 for an audio one — and
+ * a plain press always rippled. Both are now choices: a picker per kind, and
+ * Option-click overwrites instead of rippling.
+ *
+ * The choice is remembered PER PROJECT, because "which track do I build on" is a
+ * property of the edit, not of the person. The sequence you open next may have
+ * fewer tracks than the one you chose in, so the host clamps rather than fails
+ * and reports the track it actually used.
+ */
+var seqTracks = null;             // { v, a, name } for the open sequence
+function trackKey() { return "aip_track::" + (currentProjectKey || "__none__"); }
+function loadTracks() {
+    try {
+        var raw = JSON.parse(localStorage.getItem(trackKey()) || "{}");
+        return { v: parseInt(raw.v, 10) || 0, a: parseInt(raw.a, 10) || 0 };
+    } catch (e) { return { v: 0, a: 0 }; }
+}
+function saveTracks(t) {
+    try { localStorage.setItem(trackKey(), JSON.stringify({ v: t.v, a: t.a })); } catch (e) {}
+}
+/* Zero-based, matching videoTracks[] — the panel shows it one-based as V1/A1. */
+function chosenTrack(isAudio) {
+    var t = loadTracks(), idx = isAudio ? t.a : t.v;
+    var max = seqTracks ? (isAudio ? seqTracks.a : seqTracks.v) : 0;
+    if (max && idx > max - 1) idx = max - 1;
+    return idx < 0 ? 0 : idx;
+}
+function trackLabel(isAudio) { return (isAudio ? "A" : "V") + (chosenTrack(isAudio) + 1); }
+
+function refreshSeqTracks(done) {
+    cs.evalScript("aip_seqTracks()", function (res) {
+        var txt = String(res == null ? "" : res);
+        if (txt.indexOf("OK:") !== 0) { seqTracks = null; syncTrackPickers(); if (done) done(); return; }
+        var f = txt.substring(3).split(FIELD_SEP);
+        seqTracks = { v: parseInt(f[0], 10) || 0, a: parseInt(f[1], 10) || 0, name: f[2] || "" };
+        syncTrackPickers();
+        if (done) done();
+    });
+}
+
+function wireTrackPickers() {
+    ["trkVideo", "trkAudio"].forEach(function (id) {
+        var wrap = document.getElementById(id);
+        if (!wrap || wrap.__wired) return;
+        wrap.__wired = true;
+        var btn = wrap.querySelector(".trkBtn"), pop = wrap.querySelector(".trkPop");
+        btn.addEventListener("click", function (e) {
+            e.stopPropagation();
+            var open = wrap.classList.contains("open");
+            // Only one popover at a time, including the sort beside it.
+            closeAllPops();
+            if (!open) { wrap.classList.add("open"); pop.style.display = "flex"; }
+        });
+    });
+}
+/* Every popover in the contents bar, closed together. Without this, opening the
+ * track picker left the sort menu hanging behind it. */
+function closeAllPops() {
+    var wraps = document.querySelectorAll(".trkWrap, .cSortWrap, .tSortWrap");
+    for (var i = 0; i < wraps.length; i++) {
+        wraps[i].classList.remove("open");
+        var p = wraps[i].querySelector(".trkPop, .cSortPop");
+        if (p) p.style.display = "none";
+    }
+}
+
+function syncTrackPickers() {
+    [["trkVideo", false], ["trkAudio", true]].forEach(function (pair) {
+        var wrap = document.getElementById(pair[0]);
+        if (!wrap) return;
+        var isAudio = pair[1];
+        var count = seqTracks ? (isAudio ? seqTracks.a : seqTracks.v) : 0;
+        // No sequence, or none of this kind: say so rather than offering a choice
+        // that cannot be honoured.
+        wrap.style.display = count ? "flex" : "none";
+        if (!count) return;
+        var now = wrap.querySelector(".trkNow");
+        if (now) now.textContent = trackLabel(isAudio);
+        var btn = wrap.querySelector(".trkBtn");
+        if (btn) btn.setAttribute("data-tip", "<b>" + (isAudio ? "Audio" : "Video") +
+            " track: " + trackLabel(isAudio) + "</b>Where + puts a clip of this kind." +
+            "<i>" + count + " " + (isAudio ? "audio" : "video") + " track" +
+            (count === 1 ? "" : "s") + " in " + esc(seqTracks.name || "this sequence") + ".</i>");
+        var pop = wrap.querySelector(".trkPop");
+        if (!pop) return;
+        var h = "";
+        for (var i = 0; i < count; i++) {
+            h += '<button class="gearItem trkOpt" data-idx="' + i + '"><span class="cTick"></span>' +
+                (isAudio ? "A" : "V") + (i + 1) + '</button>';
+        }
+        pop.innerHTML = h;
+        var opts = pop.querySelectorAll(".trkOpt");
+        for (var k = 0; k < opts.length; k++) {
+            opts[k].classList.toggle("on",
+                parseInt(opts[k].getAttribute("data-idx"), 10) === chosenTrack(isAudio));
+            (function (el) {
+                el.onclick = function (e) {
+                    e.stopPropagation();
+                    var t = loadTracks();
+                    var val = parseInt(el.getAttribute("data-idx"), 10) || 0;
+                    if (isAudio) t.a = val; else t.v = val;
+                    saveTracks(t);
+                    wrap.classList.remove("open");
+                    pop.style.display = "none";
+                    syncTrackPickers();
+                    /* paintContents, not renderContents — the latter takes the host's
+                     * reply and parses it. The rows are already in hand; they just
+                     * need redrawing so each + tooltip names the new track. */
+                    paintContents();
+                };
+            })(opts[k]);
+        }
+    });
+}
+
+function insertToTimeline(hit, over) {
     var r = hit.rec;
     if (r.kind === "B") return;
     if (r.off) { setStatus("“" + r.name + "” is offline — relink it in Premiere first.", "error"); return; }
-    var isAudio = contentsType(r) === "Audio" ? "1" : "0";
+    var aud = contentsType(r) === "Audio";
+    var isAudio = aud ? "1" : "0";
+    var idx = chosenTrack(aud);
     cs.evalScript("aip_insertToTimeline(" + q(contentsPath.join("\t")) + "," + r.idx + "," +
-                  q(r.name) + "," + q(isAudio) + ")", function (res) {
+                  q(r.name) + "," + q(isAudio) + "," + q(String(idx)) + "," +
+                  q(over ? "over" : "insert") + ")", function (res) {
         res = String(res == null ? "" : res);
         if (res.indexOf("OK:") === 0) {
-            setStatus("Inserted “" + r.name + "” at the playhead on " + res.substring(3) + ".", "ok");
+            /* The host reports the track it ACTUALLY used and the mode it ran, not
+             * what was asked for — it clamps a remembered track to a narrower
+             * sequence, and saying "V4" when it landed on V2 is the kind of small
+             * lie you only catch after cutting on the wrong layer. */
+            var f = res.substring(3).split(FIELD_SEP);
+            var onTrack = f[0] || (aud ? "A1" : "V1");
+            var didOver = f[1] === "over";
+            setStatus((didOver ? "Overwrote with “" : "Inserted “") + r.name +
+                "” at the playhead on " + onTrack + ".", "ok",
+                didOver
+                    ? "Whatever was under the playhead on " + onTrack +
+                      " was replaced. Premiere's own Undo (⌘Z) covers this — the panel's does not."
+                    : "Clips to the right rippled along to make room.");
+            refreshSeqTracks();          // the edit may have added a track
         } else if (res === "NOSEQ") {
             setStatus("No sequence open — open one and put the playhead where you want it.", "error");
         } else if (res === "NOTRACK") {
@@ -1205,7 +1473,14 @@ function wireContents() {
         var hit = contentsRowAt(e.target);
         if (!hit) return;
         // The two hover buttons act instead of the row, not as well as it.
-        if (e.target.closest && e.target.closest(".cIns")) { e.stopPropagation(); insertToTimeline(hit); return; }
+        if (e.target.closest && e.target.closest(".cIns")) {
+            e.stopPropagation();
+            /* Option (or Alt on Windows) overwrites instead of rippling. Behind a
+             * modifier because it destroys whatever is under the playhead, and a
+             * plain press is the one you want ninety-nine times out of a hundred. */
+            insertToTimeline(hit, !!(e.altKey || e.metaKey));
+            return;
+        }
         if (e.target.closest && e.target.closest(".cPlay")) { e.stopPropagation(); contentsDblClick(hit); return; }
         contentsClick(hit);
     });
@@ -1433,19 +1708,39 @@ function wireMenu(scope, node, onColor, onAct, actsFn) {
  * over the old layout. Every render caches each element's settled rect instead,
  * which is transform-independent — so a drag stays responsive with no lockout.
  */
+/* Walks descendants, not just direct children, because tree rows now live inside
+ * a card wrapper. Stops at anything carrying __node rather than descending into a
+ * row's own spans and buttons — on a 370-bin project that inner walk would be
+ * thousands of elements per drag frame for nothing. */
 function cacheRects(container) {
-    Array.prototype.forEach.call(container.children, function (el) {
-        if (el.__node) el.__rect = el.getBoundingClientRect();
-    });
+    (function walk(el) {
+        var kids = el.children;
+        for (var i = 0; i < kids.length; i++) {
+            if (kids[i].__node) { kids[i].__rect = kids[i].getBoundingClientRect(); continue; }
+            walk(kids[i]);
+        }
+    })(container);
 }
+/* Descendants, not just direct children — same reason as cacheRects: tree rows
+ * live inside a card wrapper now. liveSortMove hit-tests through this, so when it
+ * only looked one level down the drag silently did nothing: no element found, an
+ * early return, and a row that would not move. Found by the sort and pin suites
+ * within a minute of the cards going in. */
 function elAtPoint(container, x, y) {
-    var kids = container.children;
-    for (var i = 0; i < kids.length; i++) {
-        var el = kids[i], r = el.__rect;
-        if (!el.__node || !r) continue;
-        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return el;
-    }
-    return null;
+    var hit = null;
+    (function walk(el) {
+        var kids = el.children;
+        for (var i = 0; i < kids.length && !hit; i++) {
+            var k = kids[i];
+            if (k.__node) {
+                var r = k.__rect;
+                if (r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) hit = k;
+                continue;
+            }
+            walk(k);
+        }
+    })(container);
+    return hit;
 }
 
 var FLIP_MS = 200;
@@ -1734,15 +2029,29 @@ function renderPinned() {
             // the value, so computing it later left this silently falsy.
             var tileGone = !!node.folder && linkMissing(binPathOf(node));
             var tileUnset = linkUnset(node);
-            var sub = node.folder ? (tileGone ? "folder missing" : folderLeaf(node.folder)) : "no folder";
+            /* The subtitle was the linked folder's leaf on its own line — which is
+             * the bin's name again on any pin made by dropping a folder, so most
+             * tiles spent a whole extra line repeating themselves. It is kept only
+             * when it says something the name does not: a missing folder, no folder
+             * at all, or a folder whose leaf genuinely differs. */
+            var sub = "";
+            if (!node.folder) sub = "no folder";
+            else if (tileGone) sub = "folder missing";
+            else if (folderLeaf(node.folder).toLowerCase() !== String(node.name).toLowerCase()) {
+                sub = folderLeaf(node.folder);
+            }
             // How many files the last Import put in here — marked until the
             // next run, so a glance answers "did anything actually arrive".
             var fresh = freshRollup(node, binPathOf(node), true);
             tile.innerHTML =
                 menuHTML([{ act: "unpin", label: "Unpin", icon: ICON_PIN }], node.name, true) +
+                /* One line: icon, name, and the subtitle only if there is one. Two
+                 * stacked lines cost ~20px per row of tiles for a subtitle that was
+                 * usually the name over again. */
                 '<div class="pinTop"><span class="pinIco">' + ICON_FOLDER_FILLED + '</span>' +
-                '<span class="pinName">' + esc(node.name) + '</span></div>' +
-                '<div class="pinSub">' + esc(sub) + '</div>' +
+                '<span class="pinName">' + esc(node.name) + '</span>' +
+                (sub ? '<span class="pinSub">' + esc(sub) + '</span>' : '') +
+                '</div>' +
                 (fresh ? '<span class="newBadge clickable" data-tip="' +
                     (freshTip(node, binPathOf(node), true) +
                      "<i>Click for everything ever imported here.</i>").replace(/"/g, "&quot;") +
@@ -1880,12 +2189,35 @@ function undoLast() {
             "a bin renamed or moved, files already imported — stays as it is.");
     });
 }
+/* A switch in the menu, drawn from state rather than from a label that rewrites
+ * itself. "Mirror subfolders: off" made you work out whether it was reporting the
+ * state or offering the action; this shows the state and takes the click. */
+function setGearSwitch(id, on) {
+    var el = document.getElementById(id);
+    if (el) el.classList.toggle("on", !!on);
+}
+
+/* Undo and Revert are chips that are ABSENT when they can do nothing, rather
+ * than four fixed buttons of which two were greyed out in every screenshot Bom
+ * sent. syncCtxBar hides the whole row once neither has anything to offer. */
+function syncCtxBar() {
+    var bar = document.getElementById("ctxBar");
+    if (!bar) return;
+    var any = false, kids = bar.querySelectorAll("button");
+    for (var i = 0; i < kids.length; i++) if (kids[i].style.display !== "none") { any = true; break; }
+    bar.style.display = any ? "flex" : "none";
+}
 function syncUndoBtn() {
     var b = document.getElementById("tbUndo");
     if (!b) return;
     var on = canUndo();
-    b.disabled = !on;
-    b.classList.toggle("off", !on);
+    b.style.display = on ? "flex" : "none";
+    var lbl = document.getElementById("tbUndoLabel");
+    // Name what it will undo. "Undo" alone makes you press it to find out.
+    if (lbl) lbl.textContent = on
+        ? "Undo " + String(undoStack[undoStack.length - 1].label).replace(/^(the |a )/, "")
+        : "Undo";
+    syncCtxBar();
     b.setAttribute("data-tip", on
         ? "Undo <b>" + esc(undoStack[undoStack.length - 1].label) + "</b>Puts the panel's structure back." +
           "<i>Things already done in Premiere — a rename, a move, files imported — stay as they are.</i>"
@@ -2456,9 +2788,31 @@ function renderTree() {
     flatRows = flattenVisible();
     rowEls = []; gapEls = []; activeDrop = null;
 
+    /* Top-level bins are cards; their sub-bins are rows inside them.
+     *
+     * Cards at the top level ONLY. A real structure here goes Footage > Kling >
+     * v1, and a card inside a card inside a card is unreadable at 400px — so
+     * depth 2+ stays indent plus a rail, which is what the mock settled on.
+     *
+     * The row and gap ARRAYS keep their flat indexing, which is what drag and
+     * drop reads (rowEls[i].getBoundingClientRect(), gapEls[i]) — so the nesting
+     * is a DOM change only and the insertion logic never learns about it.
+     */
+    var card = null;
     for (var i = 0; i < flatRows.length; i++) {
-        gapEls[i] = host.appendChild(makeGap());
-        rowEls[i] = host.appendChild(makeRow(flatRows[i]));
+        var top = flatRows[i].depth === 0;
+        // A gap before a top-level bin is the space BETWEEN two cards, so it
+        // belongs outside them; a gap between sub-bins belongs inside.
+        gapEls[i] = (top ? host : (card || host)).appendChild(makeGap());
+        if (top) {
+            card = document.createElement("div");
+            card.className = "binCard";
+            var nd = flatRows[i].node;
+            if (nd.color) card.style.setProperty("--cardEdge", nd.color);
+            if (nd.children && nd.children.length && nd.open === false) card.className += " folded";
+            host.appendChild(card);
+        }
+        rowEls[i] = (card || host).appendChild(makeRow(flatRows[i]));
     }
     gapEls[flatRows.length] = host.appendChild(makeGap());
     cacheRects(host);
@@ -2515,13 +2869,22 @@ function makeRow(entry) {
             row.className = "trow" + (hasFolder ? " linked" : " unlinked") +
                 (dupNodes.indexOf(node) >= 0 ? " dupName" : "") +
                 (isSelected(node) ? " selected" : "");
-            row.style.marginLeft = (depth * indentPx()) + "px";
+            /* The indent is PADDING inside the row, not a margin on it.
+             *
+             * margin-left shrank every sub-bin, so inside a card the rows sat in a
+             * narrowing column with the card's background showing down the left —
+             * an indented tree in a box rather than rows in a card, which is
+             * exactly the difference Bom kept pointing at. As padding, the row
+             * spans the card edge to edge and only its contents step right. */
+            row.style.setProperty("--indent", (depth * indentPx()) + "px");
             // depth as an attribute, so the tree guide lines can be pure CSS
             row.setAttribute("data-depth", depth);
             // a linked bin gets a 2px rail in its own colour (grey if uncoloured)
             if (hasFolder) row.style.setProperty("--rail", node.color || "rgba(255,255,255,0.22)");
             if (dupNodes.indexOf(node) >= 0) row.setAttribute("data-tip",
                 "<b>Two bins here share this name</b>Bins are found by name, so the panel cannot tell them apart — rename one of them.");
+            // (A row-level folder tooltip lived here while the chip was being
+            // suppressed. The chip is back and carries it again.)
 
             // fold/unfold parents; leaves get a spacer so names stay aligned
             var chev = kids
@@ -2539,6 +2902,14 @@ function makeRow(entry) {
                     ? '<span class="tchip gone" data-tip="<b>This folder is missing</b>' + esc(node.folder) +
                       '<i>Import cannot bring anything in until it points somewhere that exists. Right-click > Link…</i>">' +
                       esc(folderLeaf(node.folder)) + '</span>'
+                    /* Always shown, even when it repeats the bin name.
+                     *
+                     * I suppressed it as a declutter — dropping a folder names the
+                     * bin after that folder, so it printed the name straight back
+                     * on 9 of 10 rows. Wrong call: Bom clicks it to open the folder
+                     * in Finder, so it is a CONTROL, not a caption, and a control
+                     * that appears on some rows and not others is worse than one
+                     * that repeats itself. */
                     : '<span class="tchip" data-tip="Linked to <b>' + esc(node.folder) + '</b>Import pulls new files from here into this bin.<i>Click to open it in Finder.</i>">' + esc(folderLeaf(node.folder)) + '</span>')
                 : (unset
                     ? '<span class="tnolink warn" data-tip="<b>No folder linked</b>This bin has nothing to import from and no sub-bins.<i>Drag a folder onto it, or right-click > Link…</i>">not linked</span>'
@@ -2564,6 +2935,9 @@ function makeRow(entry) {
             // menu is shorter than before despite the extra option existing.
             var acts = rowActionsFor(node);
 
+            /* No sub-bin count. I added one because the mock had it, and Bom does
+             * not want it: the rows are right there, and on a folded card the
+             * number is the least useful thing the header could be saying. */
             row.innerHTML =
                 '<span class="tgrip" data-tip="Drag to reorder or re-nest.<i>Drag it up into PINNED to pin it.</i>">' + ICON_GRIP + '</span>' +
                 chev +
@@ -3359,8 +3733,7 @@ function setMirror(on) {
     syncMirrorLabel();
 }
 function syncMirrorLabel() {
-    var el = document.getElementById("giMirrorLabel");
-    if (el) el.textContent = mirrorOn() ? "Mirror subfolders: on" : "Mirror subfolders: off";
+    setGearSwitch("giMirrorSw", mirrorOn());
 }
 
 /* The one implementation. There used to be two with this name — one taking a
@@ -3603,6 +3976,115 @@ function importAll(auto) {
     });
 }
 
+/* ====================================================================
+ *  WHAT IS WAITING — the count on the Import button
+ * ====================================================================
+ *
+ * The panel never said what was pending before you committed to it. On a
+ * 370-bin project that is the difference between pressing Import and wondering
+ * whether to.
+ *
+ * The obvious way to count is to ask Premiere per bin, which is one round trip
+ * each and unusable at that size. This does it in ONE: aip_surveyClips returns
+ * every clip in the project with its media path, and the folders are read
+ * locally through Node. So the cost is one evalScript plus N directory reads,
+ * not N evalScripts.
+ *
+ * Event-driven only — a project opening, an import finishing, a folder being
+ * linked. Never on a timer: a number that refreshes itself while you are not
+ * looking is a promise this cannot keep, since files appear on disk without
+ * telling anyone.
+ */
+var pendingCount = null;          // null = not computed yet, so say nothing
+var pendingBins = 0;              // how many bins have something waiting
+var pendingLinked = 0;            // how many linked bins were looked at
+var pendingBusy = false;
+
+function extSet() {
+    var out = {}, parts = EXTENSIONS.split(",");
+    for (var i = 0; i < parts.length; i++) out[parts[i]] = true;
+    return out;
+}
+/* Files in one folder that Premiere would take. Not recursive: a sub-bin has
+ * its own link and gets counted on its own row. */
+function importableIn(dir, exts) {
+    var fs = nodeFs(), out = [];
+    if (!fs) return out;
+    var names;
+    try { names = fs.readdirSync(dir); } catch (e) { return out; }
+    for (var i = 0; i < names.length; i++) {
+        var nm = String(names[i]);
+        if (nm.charAt(0) === ".") continue;
+        var dot = nm.lastIndexOf(".");
+        if (dot <= 0) continue;
+        if (!exts[nm.substring(dot + 1).toLowerCase()]) continue;
+        var full = joinPath(dir, nm);
+        try { if (!fs.statSync(full).isFile()) continue; } catch (e2) { continue; }
+        out.push(full);
+    }
+    return out;
+}
+
+function refreshPending(done) {
+    if (pendingBusy) return;
+    if (!nodeFs()) { pendingCount = null; syncImportBtn(); if (done) done(); return; }
+    var targets = [], off = skippedNodes();
+    forEachNode(function (nd) { if (nd.folder && !off.has(nd)) targets.push(nd); });
+    pendingLinked = targets.length;
+    if (!targets.length) {
+        pendingCount = 0; pendingBins = 0;
+        syncImportBtn(); if (done) done(); return;
+    }
+    pendingBusy = true;
+    var forKey = currentProjectKey;
+    cs.evalScript("aip_surveyClips()", function (res) {
+        pendingBusy = false;
+        // The project may have changed under us while Premiere was answering.
+        if (forKey !== currentProjectKey) { if (done) done(); return; }
+        var txt = String(res == null ? "" : res);
+        if (txt.indexOf("ERR:") === 0) { pendingCount = null; syncImportBtn(); if (done) done(); return; }
+        var have = {}, clips = orgParseSurvey(txt);
+        for (var i = 0; i < clips.length; i++) {
+            if (clips[i].media) have[orgFold(clips[i].media)] = true;
+        }
+        var exts = extSet(), total = 0, bins = 0;
+        for (var t = 0; t < targets.length; t++) {
+            var files = importableIn(targets[t].folder, exts), n = 0;
+            for (var f = 0; f < files.length; f++) if (!have[orgFold(files[f])]) n++;
+            if (n) { total += n; bins++; }
+        }
+        pendingCount = total; pendingBins = bins;
+        syncImportBtn();
+        if (done) done();
+    });
+}
+
+/* What the button says. Three states: unknown (say only "Import", exactly as it
+ * always did), nothing waiting, and a real count. */
+function syncImportBtn() {
+    var row = document.getElementById("importRow");
+    var lbl = document.getElementById("importLabel");
+    var sub = document.getElementById("importSub");
+    if (!lbl || !sub) return;
+    if (pendingCount === null) {
+        lbl.textContent = "Import";
+        sub.textContent = "";
+        if (row) row.classList.remove("idle");
+        return;
+    }
+    if (pendingCount === 0) {
+        lbl.textContent = "Nothing new to import";
+        sub.textContent = pendingLinked
+            ? ("all " + pendingLinked + " linked bin" + (pendingLinked === 1 ? " is" : "s are") + " up to date")
+            : "no bins have a folder linked yet";
+        if (row) row.classList.add("idle");
+        return;
+    }
+    lbl.textContent = "Import " + pendingCount + " new file" + (pendingCount === 1 ? "" : "s");
+    sub.textContent = "from " + pendingBins + " of " + pendingLinked + " linked bins";
+    if (row) row.classList.remove("idle");
+}
+
 function runImports(jobs, madeBit) {
     var total = 0, errors = [], i = 0;
     var got = [];                     // { bin, files[] } for the log and the badges
@@ -3625,6 +4107,7 @@ function runImports(jobs, madeBit) {
             recolorAll(function () {
                 importBusy = false;
                 checkLinks();         // mirroring may have linked new bins
+                refreshPending();     // what is left waiting, now that these are in
                 renderAll();          // paint the "new" badges
                 if (!errors.length) {
                     setStatus("✓ " + madeBit + "imported " + files + ".", "ok", detail);
@@ -4640,8 +5123,8 @@ function syncRevertBtn() {
     var el = document.getElementById("tbRevert");
     if (!el) return;
     var n = revertableRuns().length;
-    el.disabled = !n;
-    el.classList.toggle("off", !n);
+    el.style.display = n ? "flex" : "none";
+    syncCtxBar();
 }
 function revertFileCount(run) {
     var n = 0;
@@ -5383,8 +5866,7 @@ function setAutoImport(on) {
     syncAutoImportLabel();
 }
 function syncAutoImportLabel() {
-    var el = document.getElementById("giAutoImportLabel");
-    if (el) el.textContent = autoImportOn() ? "Import on project open: on" : "Import on project open: off";
+    setGearSwitch("giAutoImportSw", autoImportOn());
 }
 function maybeAutoImport(key) {
     if (!autoImportOn() || key === "__noproject__" || autoImportKey === key) return;
@@ -5420,6 +5902,9 @@ function resetSessionState() {
      * point, so the button would be painted from the wrong log for an instant.
      * The renderAll() that follows the reassignment paints it correctly. */
     revertInvalidate();
+    /* The count described the project we just left. Blank rather than stale:
+     * "Import 4 new files" about someone else's project is worse than silence. */
+    pendingCount = null; pendingBins = 0; pendingLinked = 0;
     setSearchTerm("");
     var inp = document.getElementById("searchInput");
     if (inp) inp.value = "";
@@ -5452,6 +5937,7 @@ function refreshProject(force) {
             // First look at this project: confirm the saved links still exist
             // before anyone trusts them, then bring in whatever is new.
             checkLinksAndReport();
+            refreshPending();
             maybeAutoImport(key);
         }
     });
@@ -6495,6 +6981,12 @@ document.addEventListener("DOMContentLoaded", function () {
         if (e && e.altKey) { showImportPicker(); return; }
         importAll(false);
     };
+    /* The picker existed only behind Option-click, so nothing on screen ever
+     * mentioned it. The modifier still works; this makes it findable. */
+    document.getElementById("importPick").onclick = function (e) {
+        e.stopPropagation();
+        showImportPicker();
+    };
     document.getElementById("treeHeader").onclick = toggleCollapsed;
     // Inside the collapse header, so it has to keep its click to itself.
     document.getElementById("skipAllBtn").onclick = function (e) {
@@ -6512,17 +7004,36 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!this.disabled) toggleFoldAll();
     };
 
+    /* The panel had no keyboard shortcuts at all — the July audit said so and
+     * nothing had answered. At 370 bins, reaching for the mouse to filter is the
+     * slow path. Escape already cleared the box, so this is the other half. */
+    document.addEventListener("keydown", function (e) {
+        if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+        if (String(e.key).toLowerCase() !== "f") return;
+        var box = document.getElementById("searchInput");
+        // Only when the bins are actually on screen; the log and the builder have
+        // their own views and Cmd-F there should stay Premiere's business.
+        var main = document.getElementById("mainView");
+        if (!box || !main || main.style.display === "none") return;
+        e.preventDefault();
+        expandTree();                 // a folded section cannot be searched
+        box.focus();
+        box.select();
+    });
+
     document.getElementById("gearBtn").onclick = function (e) { e.stopPropagation(); toggleGear(); };
     document.getElementById("giPresets").onclick = function () { closeGear(); openBuilder(); };
 
     document.getElementById("giReset").onclick = function () { closeGear(); resetStructure(); };
     // the toolbar
     document.getElementById("tbRevert").onclick = revertImport;
-    document.getElementById("tbRead").onclick = readProjectBins;
-    document.getElementById("tbReload").onclick = function () {
-        refreshProject(true); setStatus("Reloaded for this project.", "");
-    };
     document.getElementById("tbUndo").onclick = undoLast;
+    /* Read and Reload are setup and repair, not daily, so they moved off the
+     * front and into the menu. Same handlers, new home. */
+    document.getElementById("giRead").onclick = function () { closeGear(); readProjectBins(); };
+    document.getElementById("giReload").onclick = function () {
+        closeGear(); refreshProject(true); setStatus("Reloaded for this project.", "");
+    };
     document.getElementById("giOrganise").onclick = function () { closeGear(); organiseNow(); };
     document.getElementById("giOrganiseBack").onclick = function () { closeGear(); organisePutBack(); };
     document.getElementById("giScan").onclick = function () { closeGear(); scanFoldersNow(); };

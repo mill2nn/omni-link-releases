@@ -91,22 +91,6 @@ button { font-family: inherit; cursor: pointer; }
    label ellipsise rather than push a button out of the panel, and the labels
    stay because four unlabelled icons in a row is four guesses. */
 .toolbar { display: flex; gap: 5px; }
-.tbBtn {
-    flex: 1; min-width: 0;
-    display: flex; align-items: center; justify-content: center; gap: 5px;
-    padding: 5px 4px; border-radius: 6px;
-    background: rgba(255, 255, 255, 0.045); border: 1px solid rgba(255, 255, 255, 0.08);
-    color: var(--text-2); font-size: 10px; font-family: inherit; transition: 0.12s;
-}
-.tbBtn svg { width: 12px; height: 12px; flex: none; }
-.tbBtn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tbBtn:hover { color: #f0f0f4; background: rgba(255, 255, 255, 0.09); border-color: rgba(255, 255, 255, 0.16); }
-.tbBtn:active { transform: translateY(1px); }
-/* Nothing to undo yet: dimmed and inert, but still present so the toolbar does
-   not reshuffle the moment it becomes usable. */
-.tbBtn.off { opacity: 0.42; cursor: default; }
-.tbBtn.off:hover { color: var(--text-2); background: rgba(255, 255, 255, 0.045); border-color: rgba(255, 255, 255, 0.08); }
-.tbBtn.off:active { transform: none; }
 .header h1 { font-size: 12.5px; font-weight: 600; letter-spacing: 0.1px; color: #f0f0f4; }
 .projName {
     font-size: 10px; color: #8a8a93; margin-top: 1px;
@@ -164,17 +148,9 @@ button { font-family: inherit; cursor: pointer; }
 }
 .obGo:hover { background: rgba(255, 255, 255, 0.11); }
 
-/* the daily action: flat, not a gradient — a glowing pill reads as a web app
-   dropped into Premiere rather than part of it */
-.importPill {
-    flex: none; display: flex; align-items: center; gap: 6px;
-    height: 28px; padding: 0 12px 0 10px; border: none; border-radius: 7px;
-    background: var(--accent-2); color: #fff;
-    font-size: 11.5px; font-weight: 600; letter-spacing: 0.1px; transition: 0.12s;
-}
-.importPill:hover { background: #3d97ee; }
-.importPill:active { transform: translateY(1px); }
-.importPill svg { width: 15px; height: 15px; flex: none; }
+/* The daily action used to be a pill up here, sharing the header with the title.
+   It is .importRow now, full width and further down, with the pending count on
+   it — see the 1.4 section at the end of this file. */
 
 .navBtn {
     width: 28px; height: 28px; flex: none; border-radius: 7px;
@@ -195,16 +171,38 @@ button { font-family: inherit; cursor: pointer; }
 
 /* gear overflow menu */
 .gearWrap { position: relative; flex: none; }
+/* The shared popover SHELL. .cSortPop also carries this class and sets its own
+   width and placement, so nothing here may size or scroll — sizing rules put on
+   .gearPop reached the sort popovers too and broke them. */
 .gearPop {
-    position: absolute; top: 30px; right: 0; z-index: 40; width: 168px;
+    position: absolute; top: 30px; right: 0; z-index: 40;
     background: #26262b; border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 10px; padding: 5px; box-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);
-    display: flex; flex-direction: column; gap: 2px;
+    display: flex; flex-direction: column; gap: 1px;
 }
+/* Only the ⋯ menu. Grouping it made it taller than the panel, so the last items
+   ran off the bottom and reaching Reset meant scrolling the whole panel.
+   #gearPop, not .gearPop: the sort popovers share the class, and when this was
+   .gearPop they inherited a 206px width they override, a max-height they do not
+   need, and overflow-y:auto — which per spec makes overflow-x compute to auto
+   as well, so a 150px sort menu grew a horizontal scrollbar. */
+#gearPop {
+    width: 206px;
+    max-height: calc(100vh - 52px);
+    overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
+}
+/* A scrollbar inside a 206px menu is most of a column, so it is thin and quiet. */
+#gearPop::-webkit-scrollbar { width: 7px; }
+#gearPop::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.16); border-radius: 4px;
+    border: 2px solid transparent; background-clip: padding-box;
+}
+#gearPop::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.26); background-clip: padding-box; }
+#gearPop::-webkit-scrollbar-track { background: transparent; }
 .gearItem {
     display: flex; align-items: center; gap: 9px; width: 100%;
-    padding: 8px 9px; border: none; border-radius: 7px;
-    background: transparent; color: var(--text); font-size: 12px; text-align: left; transition: 0.1s;
+    padding: 6px 9px; border: none; border-radius: 7px;
+    background: transparent; color: var(--text); font-size: 11.5px; text-align: left; transition: 0.1s;
 }
 .gearItem:hover { background: rgba(255, 255, 255, 0.07); }
 .gearItem.danger { color: var(--danger); }
@@ -247,7 +245,10 @@ button { font-family: inherit; cursor: pointer; }
    chip, an underline and a dot — one colour, one meaning, scannable at a glance */
 .pinTile {
     position: relative;
-    border-radius: 9px; padding: 9px 10px;
+    /* One row, not a column of two. The tile was icon + name stacked over a
+       subtitle that repeated the name on most pins — ~52px for one line of real
+       information. Padding trimmed with it. */
+    border-radius: 8px; padding: 7px 9px;
     display: flex; flex-direction: column;
     background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border);
     cursor: pointer; transition: 0.12s; -webkit-user-select: none;
@@ -275,17 +276,21 @@ button { font-family: inherit; cursor: pointer; }
 /* mid-drag the tile is a placeholder; hover lift on top of that reads as a glitch */
 .pinTile.tileSlot:hover, .pinTile.dragging:hover { transform: none; box-shadow: none; }
 .pinTile.fileOver { border-color: var(--accent); box-shadow: inset 0 0 0 2px rgba(45, 140, 235, 0.5); }
-.pinTile .pinTop { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; min-width: 0; }
+.pinTile .pinTop { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .pinTile .pinIco { flex: none; display: flex; color: var(--text-2); }
-.pinTile .pinIco svg { width: 14px; height: 14px; }
+.pinTile .pinIco svg { width: 13px; height: 13px; }
 .pinTile .pinName {
     font-size: 12px; font-weight: 600; line-height: 1.15; color: #f0f0f4;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Inline after the name now, and only present when it says something the name
+   does not — so the tile's height never changes with its contents. */
 .pinTile .pinSub {
-    font-size: 10.5px; color: #8a8a93;
+    flex: 0 1 auto; min-width: 0;
+    font-size: 10px; color: #8a8a93;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.pinTile .pinName { flex: 0 1 auto; }
 
 /* per-tile ⋮ menu + palette (shared with tree rows) */
 .tileMenu { position: absolute; top: 5px; right: 5px; z-index: 6; }
@@ -1307,7 +1312,379 @@ body.depthCues .trow[data-depth="6"]::after {
 
 /* --- roomier pinned shelf when the tree is collapsed -------------------- */
 body.treeCollapsed .pinTile { padding: 13px 12px; }
-body.treeCollapsed .pinTile .pinTop { margin-bottom: 10px; }
+/* (The folded-section rule that added margin under .pinTop went with the
+   second line it was spacing.) */
 body.treeCollapsed .pinTile .pinIco svg { width: 17px; height: 17px; }
 body.treeCollapsed .pinTile .pinName { font-size: 13px; }
 body.treeCollapsed .pinTile .pinSub { font-size: 10.5px; }
+
+/* ====================================================================
+ *  1.4 — Import as the primary control, and a contextual action row
+ * ====================================================================
+ *
+ * Import was a 30px icon sharing the header with a title and a version tag,
+ * while four buttons pressed occasionally got full-width labels underneath it.
+ * Two of those four were greyed out in every screenshot: Undo with nothing to
+ * undo, Revert with nothing imported. So the everyday action was the smallest
+ * thing on screen and half the row below it was permanent dead weight.
+ */
+.importRow { display: flex; border-radius: 9px; overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .15); }
+.importMain {
+    flex: 1 1 auto; min-width: 0;
+    display: flex; align-items: center; gap: 9px; padding: 11px 13px;
+    background: var(--accent); color: #fff;
+    font-family: inherit; text-align: left; transition: 0.12s;
+}
+.importMain svg { width: 17px; height: 17px; flex: none; }
+.impText { flex: 1 1 auto; min-width: 0; }
+#importLabel { display: block; font-size: 12.5px; font-weight: 650; line-height: 1.25;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.impSub { display: block; font-size: 10px; opacity: 0.85; line-height: 1.3;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.impSub:empty { display: none; }
+.importCaret {
+    width: 34px; flex: none; background: #2f7fdb; color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    border-left: 1px solid rgba(0, 0, 0, .2); transition: 0.12s;
+}
+.importCaret svg { width: 13px; height: 13px; }
+.importMain:hover { background: #4d9cf5; }
+.importCaret:hover { background: #3b8ff0; }
+.importMain:active, .importCaret:active { transform: translateY(1px); }
+/* Nothing waiting: it stays a button AND it stays blue — see the .importRow.idle
+   rules further down. The grey version that used to live here read as disabled,
+   which it never is: pressing Import with nothing counted is still valid. */
+
+/* The row is absent, not empty, when neither chip has anything to offer. */
+.ctxBar { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 9px; }
+.ctxBtn {
+    display: flex; align-items: center; gap: 5px;
+    padding: 4px 10px 4px 8px; border-radius: 15px;
+    background: rgba(255, 255, 255, .05); border: 1px solid var(--border);
+    color: var(--text-2); font-family: inherit; font-size: 10px; transition: 0.12s;
+    max-width: 100%; min-width: 0;
+}
+.ctxBtn svg { width: 11px; height: 11px; flex: none; }
+.ctxBtn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctxBtn:hover { color: #f0f0f4; background: rgba(255, 255, 255, .09); border-color: rgba(255, 255, 255, .18); }
+.ctxBtn:active { transform: translateY(1px); }
+#tbRevert { border-color: rgba(45, 140, 235, .4); color: #8fc3f7; background: rgba(45, 140, 235, .1); }
+#tbRevert:hover { background: rgba(45, 140, 235, .17); border-color: rgba(45, 140, 235, .6); }
+
+/* --- the menu: grouped, with real switches --- */
+.gearGrp {
+    font-size: 8.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--text-3); padding: 6px 9px 2px;
+}
+.gearDiv { height: 1px; background: var(--border); margin: 3px 0; }
+.gearLbl { flex: 1 1 auto; min-width: 0; text-align: left; }
+.gearAux { flex: none; font-size: 9px; color: var(--text-3); }
+.gearToggle { justify-content: space-between; }
+/* A switch shows the state and takes the click. The label it replaced rewrote
+   itself — "Mirror subfolders: off" — which made you work out whether it was
+   reporting the state or offering the action. */
+.gearSw {
+    width: 24px; height: 14px; border-radius: 8px; flex: none; position: relative;
+    background: rgba(255, 255, 255, .13); transition: 0.14s;
+}
+.gearSw::after {
+    content: ""; position: absolute; left: 2px; top: 2px; width: 10px; height: 10px;
+    border-radius: 50%; background: var(--text-3); transition: 0.14s;
+}
+.gearSw.on { background: var(--accent); }
+.gearSw.on::after { left: 12px; background: #fff; }
+
+/* ====================================================================
+ *  1.4 — top-level bins are cards
+ * ====================================================================
+ *
+ * A flat list of rows gave no grouping, so a top-level bin and its sub-bins read
+ * as one run of similar things. The card supplies the grouping, and its top row
+ * becomes a place to put the per-bin controls that were repeated on every row.
+ *
+ * Cards at the TOP LEVEL ONLY. A real structure here goes Footage > Kling > v1,
+ * and a card inside a card inside a card is unreadable at 400px — depth 2+ stays
+ * indent plus a rail, which is what the existing depthCues rules already draw.
+ */
+#treeList .binCard {
+    border: 1px solid var(--border); border-radius: 9px;
+    margin: 0 0 7px; position: relative;
+    background: rgba(255, 255, 255, 0.012);
+    /* NOT overflow:hidden. It was, to make the child rows respect the rounded
+       corners — and it clipped the row menu, so opening a bin's colour palette
+       showed half a popover with the buttons cut off. z-index cannot escape an
+       overflow clip; only not clipping can. The corners are handled by rounding
+       the header and the colour edge directly, below. */
+}
+/* The Premiere label colour as a 3px edge rather than a tint on a folder icon:
+   it reads at a glance, survives the card being folded, and takes nothing off
+   any row. Only drawn when a colour has actually been chosen. */
+#treeList .binCard[style*="--cardEdge"]::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: var(--cardEdge); z-index: 1;
+    /* Rounded itself, since the card no longer clips it square. */
+    border-radius: 8px 0 0 8px;
+}
+/* The top row IS the card's header, so it gets the raised surface. */
+#treeList .binCard > .trow[data-depth="0"] {
+    background: var(--surface); border-radius: 8px 8px 0 0; margin: 0;
+    padding-left: 10px;
+}
+#treeList .binCard > .trow[data-depth="0"]:hover { background: var(--surface-hover); }
+/* Sub-bins are separated by hairlines instead of each carrying a border. */
+#treeList .binCard > .trow:not([data-depth="0"]) {
+    border-top: 1px solid rgba(255, 255, 255, 0.045);
+    border-radius: 0; margin: 0;
+}
+/* The gaps between cards are the insertion points; inside a card they are the
+   insertion points between sub-bins, so both stay but the outer one carries the
+   margin the card no longer has. */
+#treeList > .tgap { margin: 0; }
+#treeList .binCard > .tgap { margin: 0; }
+/* A card whose bin is folded has nothing below its header, so the header's own
+   rounding is the card's. */
+/* Folded: the header IS the whole card, so it rounds all four. */
+#treeList .binCard.folded > .trow[data-depth="0"] { border-radius: 8px; }
+
+/* --- the card header, laid out like the mock ---
+ *
+ * Reordered with flex `order` rather than by rebuilding the row's markup. The
+ * row hit-tests itself for a dragged folder and the drag code addresses rows by
+ * index, so leaving the DOM order alone is the difference between a visual
+ * change and a functional one.
+ */
+#treeList .binCard > .trow[data-depth="0"] > * { order: 5; }
+#treeList .binCard > .trow[data-depth="0"] .tskip { order: 1; }
+#treeList .binCard > .trow[data-depth="0"] .tname { order: 2; }
+#treeList .binCard > .trow[data-depth="0"] .tspacer { order: 3; }
+#treeList .binCard > .trow[data-depth="0"] .tlog { order: 6; }
+#treeList .binCard > .trow[data-depth="0"] .rowMenu { order: 7; }
+#treeList .binCard > .trow[data-depth="0"] .newBadge { order: 9; }
+#treeList .binCard > .trow[data-depth="0"] .tchip,
+#treeList .binCard > .trow[data-depth="0"] .tnolink { order: 10; }
+#treeList .binCard > .trow[data-depth="0"] .pinDot { order: 11; }
+/* Last, so folding is where a disclosure control belongs on a card. */
+#treeList .binCard > .trow[data-depth="0"] .tchev { order: 12; margin-left: 2px; }
+/* The card's coloured edge already says which bin this is, so the folder icon on
+   the header is a third copy of the same fact. Sub-bins keep theirs. */
+#treeList .binCard > .trow[data-depth="0"] .ticon { display: none; }
+/* Tools on the header are one set per bin instead of one per row — 3 controls on
+   a five-row card rather than 15 — so they can afford to wait for a hover. */
+#treeList .binCard > .trow[data-depth="0"] .tlog,
+#treeList .binCard > .trow[data-depth="0"] .tgrip {
+    opacity: 0; transition: opacity 0.12s;
+}
+#treeList .binCard > .trow[data-depth="0"]:hover .tlog,
+#treeList .binCard > .trow[data-depth="0"]:hover .tgrip { opacity: 1; }
+
+
+/* Import stays blue with nothing waiting. Greying it out made the panel's one
+   everyday action look unavailable, when pressing it is still perfectly valid —
+   files move around on disk without the count hearing about it. The label
+   carries the state; the colour carries "this is the thing you press". */
+.importRow.idle { box-shadow: 0 1px 2px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .15); }
+.importRow.idle .importMain {
+    background: var(--accent); color: #fff; border: 0;
+}
+.importRow.idle .importCaret { background: #2f7fdb; color: #fff; border: 0; border-left: 1px solid rgba(0, 0, 0, .2); }
+.importRow.idle .importMain:hover { background: #4d9cf5; color: #fff; }
+/* Only the sub-line softens, so "nothing new" still reads as calmer than a count
+   without the button pretending to be disabled. */
+.importRow.idle .impSub { opacity: 0.72; }
+
+/* --- the insertion gaps, inside a card ---
+ *
+ * .tgap is 11px of dashed line with a "+" at rest. That was right for a flat
+ * list, where it was the only hint that you could drop between two rows. Inside
+ * a card it is destructive: 11px of dashed line between every sub-bin turns one
+ * card into a stack of separate-looking boxes, which is exactly why the cards
+ * did not read as cards. The hairline on each row already separates them.
+ *
+ * Collapsing them costs nothing functionally. A gap is pointer-events:none and
+ * nearestGap() decides the target from the ROW midpoints either side, not from
+ * the gap's own box — so a 0px gap is just as targetable, and the one being
+ * aimed at still opens to 32px with its ghost label.
+ */
+#treeList .binCard > .tgap { height: 0; }
+#treeList .binCard > .tgap::before,
+#treeList .binCard > .tgap::after { display: none; }
+/* The active target still opens, which is the only time the gap has anything to
+   say. Specificity has to beat the collapse rule above. */
+#treeList .binCard > .tgap.open { height: 32px; }
+#treeList .binCard > .tgap.open::before,
+#treeList .binCard > .tgap.open::after { display: none; }
+
+/* Between cards the dashed gap stays — those are the top-level insertion points,
+   and it doubles as the space between cards, so the card drops its own margin. */
+#treeList .binCard { margin: 0; }
+
+/* --- sub-bin rows fill the card ---
+ *
+ * Three things made a card read as "an indented tree inside a box" instead of
+ * rows in a card, and all three were inherited from the flat list the cards
+ * replaced.
+ */
+/* 1. The indent is padding now, so the row spans the card and only its contents
+      step right. main.js sets --indent; nothing sets margin-left any more. */
+#treeList .trow { margin-left: 0; padding-left: calc(10px + var(--indent, 0px)); }
+/* 2. No vertical guide rails inside a card. They existed to show nesting in a
+      flat list; the card's own border and the indent now do that, and a rail
+      running down the middle of a card fights the card's left edge. */
+#treeList .binCard > .trow::after { display: none; }
+/* 3. No folder icon on a sub-bin. Every row in the tree is a bin — the icon was
+      the same glyph on every line, and the switch already marks the row's start.
+      The header dropped its icon for the same reason. */
+#treeList .binCard > .trow .ticon { display: none; }
+/* The linked rail keeps its place but hugs the row's real left edge. */
+#treeList .binCard > .trow.linked::before { left: 0; top: 0; bottom: 0; border-radius: 0; }
+
+/* --- no dotted lines ---
+ *
+ * The dashed rule and the "+" were the flat list's way of saying "you can drop
+ * between these two rows". With cards there is nothing left to explain: the space
+ * between two cards is obviously between them, and the gap being aimed at still
+ * opens to 32px with a ghost row and a label, which is a far better hint than a
+ * dashed line that is always there.
+ *
+ * The gaps keep their height — they are the spacing between cards now that the
+ * card has no margin of its own — and stay targetable, because nearestGap works
+ * from the row midpoints either side rather than from the gap's own box.
+ */
+#treeList .tgap::before,
+#treeList .tgap::after { display: none; }
+/* Including on hover, where they used to get firmer to read as interactive. */
+#treeList:hover .tgap::before,
+#treeList:hover .tgap::after { display: none; }
+
+/* ====================================================================
+ *  1.4 — the section header, and the search
+ * ====================================================================
+ *
+ * Seven things shared this row: a fold chevron, the title, a permanent hint, an
+ * Import switch, fold-all, reverse, and a sort control that printed its mode as
+ * text. At 400px the title wrapped onto two lines — the row could not fit its own
+ * name. The hint and the sort's text label are gone; what is left is a title and
+ * four controls that are the same size and shape as each other.
+ */
+.folderHeader .fhLabel { flex: none; }
+/* One shape for all four. The sort was a wide pill, the switch a bare square, and
+   they sat side by side looking like controls from two different panels. */
+.folderHeader .cRev,
+.folderHeader .cSort.iconOnly {
+    width: 24px; height: 24px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0; border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    color: var(--text-2); transition: 0.12s;
+}
+.folderHeader .cRev:hover,
+.folderHeader .cSort.iconOnly:hover { color: #f0f0f4; border-color: rgba(255, 255, 255, 0.22); }
+.folderHeader .cSort.iconOnly svg { width: 13px; height: 13px; transform: none; }
+.folderHeader .cSortWrap.open .cSort.iconOnly svg { transform: none; }
+/* The mode lives on the tooltip and as the tick in the menu this opens. Kept in
+   the DOM because syncTreeSort writes it and the sort tests read it. */
+.folderHeader .cSortNow { display: none; }
+/* Push the controls to the right of the title, now that no hint fills the middle. */
+.folderHeader .cSkipAll { margin-left: auto; }
+
+/* The search box was the tallest thing on the panel and carried an example the
+   tooltip already explains in full. */
+.searchRow { padding: 4px 8px; margin-bottom: 10px; }
+.searchRow .searchInput,
+#searchInput { font-size: 11px; }
+
+/* The chip sits on the card's surface now, not the panel's darker background, and
+   at --text-3 that measured 4.38:1 — under AA's 4.5 for 10.5px text. It is a
+   click target for opening the folder, so it has to be readable. One step up. */
+#treeList .tchip { color: var(--text-2); }
+
+/* ====================================================================
+ *  1.4 — the bins row sticks, and it carries the count
+ * ====================================================================
+ *
+ * Only the top block was sticky, so on a 370-bin project the BINS row and the
+ * search scrolled away: you reached the bottom, wanted to filter, and had to
+ * scroll all the way back up. --stickTop is written by renderAll from the top
+ * block's measured height, because that height changes as the Undo and Revert
+ * chips appear and a constant would be wrong half the time.
+ */
+#structWrap #treeHeader,
+#structWrap .searchRow {
+    position: sticky; z-index: 20;
+    background: var(--bg);
+}
+#structWrap #treeHeader { top: var(--stickTop, 0px); padding-top: 4px; }
+#structWrap .searchRow {
+    /* Below the header it is stuck under, so the two never overlap. */
+    top: calc(var(--stickTop, 0px) + 30px);
+    margin-bottom: 10px;
+}
+/* Folded, the search is not in the flow, so the header alone is stuck. */
+body.treeCollapsed #structWrap #treeHeader { padding-bottom: 4px; }
+
+/* How many bins, and how many are switched off. The total was already counted on
+   every render for the search's "2 of 6" and thrown away otherwise. */
+.binTally {
+    flex: none; font-size: 9.5px; font-weight: 600; letter-spacing: 0;
+    color: var(--text-3); padding: 0 6px; border-radius: 9px;
+    background: rgba(255, 255, 255, 0.06); line-height: 16px;
+}
+.binTally:empty { display: none; }
+
+/* Reverse is a menu row now, and .cRev is a 22x22 square rule written for its old
+   life as a header button — it sits later in this file than .gearItem, so it won
+   and squashed the row into a square with its label spilling out. Undone here
+   rather than by reordering the file, because .cRev is still correct for the
+   contents view's own header. */
+.gearItem.cRev {
+    width: 100%; height: auto; margin-right: 0;
+    padding: 7px 9px; justify-content: flex-start;
+    background: transparent; border: none; border-radius: 7px;
+    font-size: 11.5px;
+}
+.gearItem.cRev:hover { background: rgba(255, 255, 255, 0.07); border: none; }
+.gearItem.cRev.desc { color: var(--text); border: none; }
+
+/* ====================================================================
+ *  1.4 — which track the + drops onto
+ * ====================================================================
+ *
+ * The + was hardcoded to tracks[0] and always rippled. Both are choices now: a
+ * picker per kind, and ⌥-click to overwrite. The pickers borrow the sort control's
+ * shape beside them, because they are the same kind of thing — a small menu that
+ * remembers what you chose.
+ */
+.trkWrap { position: relative; flex: none; }
+.trkBtn {
+    display: flex; align-items: center; gap: 4px;
+    padding: 4px 6px 4px 8px; border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05); color: var(--text-2);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    font-family: inherit; font-size: 10px; font-weight: 600; transition: 0.12s;
+}
+.trkBtn svg { width: 10px; height: 10px; flex: none; transition: transform 0.15s; }
+.trkBtn:hover { color: #f0f0f4; border-color: rgba(255, 255, 255, 0.22); }
+.trkWrap.open .trkBtn { color: #f0f0f4; border-color: rgba(255, 255, 255, 0.28); }
+.trkWrap.open .trkBtn svg { transform: rotate(180deg); }
+/* Narrow, because every row is two characters. Left-aligned so V1 and V10 share
+   an edge rather than shuffling as the number grows. */
+.trkPop { top: 26px; left: 0; width: 74px; }
+.trkOpt { font-size: 11px; padding: 6px 9px; }
+/* Pushes the sort controls to the far side, so the two groups do not read as one. */
+.cBarSpacer { flex: 1 1 auto; }
+
+/* The source in-out range on a clip row. Tabular figures so the colons line up
+   down the list — proportional digits make a column of timecodes look ragged and
+   harder to compare than the same numbers monospaced. */
+.cRange {
+    flex: none; font-size: 9.5px; color: var(--text-3);
+    font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1;
+    letter-spacing: 0.2px; white-space: nowrap;
+}
+.cRow:hover .cRange { color: var(--text-2); }
+/* A genuinely trimmed clip is the one worth noticing — an untrimmed one just shows
+   its length, in the quiet grey everything else uses. */
+.cRange.trimmed { color: var(--text-2); font-weight: 600; }
+.cRow:hover .cRange.trimmed { color: #f0f0f4; }
